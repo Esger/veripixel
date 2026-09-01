@@ -7,7 +7,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   targetEl.dataset.aiDetectorBadgeInjected = 'loading';
 
   let container: HTMLElement;
-  let relativeTop = 4;
+  let relativeBottom = 4;
   let relativeRight = 4;
 
   if (targetEl instanceof HTMLImageElement && targetEl.parentElement) {
@@ -19,7 +19,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 
     const imgRect = targetEl.getBoundingClientRect();
     const parentRect = container.getBoundingClientRect();
-    relativeTop = Math.max(0, imgRect.top - parentRect.top + 4);
+    relativeBottom = Math.max(0, parentRect.bottom - imgRect.bottom + 4);
     relativeRight = Math.max(0, parentRect.right - imgRect.right + 4);
   } else {
     container = targetEl;
@@ -32,8 +32,9 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   const host = document.createElement('div');
   host.className = 'ai-detector-badge-host';
   host.style.position = 'absolute';
-  host.style.top = `${relativeTop}px`;
+  host.style.bottom = `${relativeBottom}px`;
   host.style.right = `${relativeRight}px`;
+  host.style.top = 'auto';
   host.style.left = 'auto';
 
   const shadow = host.attachShadow({ mode: 'open' });
@@ -177,7 +178,16 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
       tooltipEl.hidePopover();
     } else if (typeof tooltipEl.showPopover === 'function') {
       const badgeRect = badgeEl.getBoundingClientRect();
-      tooltipEl.style.top = `${badgeRect.bottom + 4}px`;
+      const spaceAbove = badgeRect.top;
+
+      if (spaceAbove > 200) {
+        tooltipEl.style.top = 'auto';
+        tooltipEl.style.bottom = `${window.innerHeight - badgeRect.top + 4}px`;
+      } else {
+        tooltipEl.style.bottom = 'auto';
+        tooltipEl.style.top = `${badgeRect.bottom + 4}px`;
+      }
+
       tooltipEl.style.left = `${Math.max(10, badgeRect.right - 220)}px`;
       tooltipEl.showPopover();
     }
