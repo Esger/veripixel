@@ -77,17 +77,16 @@ async function processImageBuffer(imageUrl: string, buffer: number[], contentTyp
     // 2. Extract EXIF / Metadata
     const metadata = await extractMetadata(blob);
 
-    // 3. Compute patch scores via ONNX Runtime Web / Model Runner
-    const patchScores: PatchResult[] = await Promise.all(
-      patches.map(async (patch) => {
-        const aiScore = await runPatchInference(patch.canvas);
-        return {
-          patchIndex: patch.patchIndex,
-          position: patch.position,
-          aiScore
-        };
-      })
-    );
+    // 3. Compute patch scores via ONNX Runtime Web / Model Runner (sequential pass to prevent WASM session concurrency errors)
+    const patchScores: PatchResult[] = [];
+    for (const patch of patches) {
+      const aiScore = await runPatchInference(patch.canvas);
+      patchScores.push({
+        patchIndex: patch.patchIndex,
+        position: patch.position,
+        aiScore
+      });
+    }
 
     // Aggregate overall score (max score among patches + metadata adjustment)
     const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));

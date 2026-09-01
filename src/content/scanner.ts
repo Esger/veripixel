@@ -43,24 +43,32 @@ function processImage(img: HTMLImageElement): void {
 
   const imageUrl = img.src;
 
-  chrome.runtime.sendMessage(
-    { type: 'ANALYZE_IMAGE', imageUrl } as ExtensionMessage,
-    (response) => {
-      if (chrome.runtime.lastError) {
-        console.warn('[ContentScript] Message error for image:', imageUrl, chrome.runtime.lastError.message);
-        delete img.dataset.aiDetectorProcessed;
-        return;
-      }
+  try {
+    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+      delete img.dataset.aiDetectorProcessed;
+      return;
+    }
 
-      if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
-        if (response.result.status === 'complete') {
-          injectImageBadge(img, response.result);
-        } else if (response.result.status === 'error') {
+    chrome.runtime.sendMessage(
+      { type: 'ANALYZE_IMAGE', imageUrl } as ExtensionMessage,
+      (response) => {
+        if (chrome.runtime.lastError) {
           delete img.dataset.aiDetectorProcessed;
+          return;
+        }
+
+        if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
+          if (response.result.status === 'complete') {
+            injectImageBadge(img, response.result);
+          } else if (response.result.status === 'error') {
+            delete img.dataset.aiDetectorProcessed;
+          }
         }
       }
-    }
-  );
+    );
+  } catch (err) {
+    delete img.dataset.aiDetectorProcessed;
+  }
 }
 
 // Intersection Observer for lazy scanning
