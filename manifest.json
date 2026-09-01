@@ -12,6 +12,9 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-eval'; object-src 'self'"
+  },
   "action": {
     "default_popup": "src/popup/popup.html"
   },
