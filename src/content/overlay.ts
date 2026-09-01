@@ -1,30 +1,39 @@
 import { AnalysisResult } from '../shared/types';
 
-export function injectLoadingBadge(imgElement: HTMLImageElement): void {
-  if (imgElement.dataset.aiDetectorBadgeInjected) {
+export function injectLoadingBadge(targetEl: HTMLElement): void {
+  if (targetEl.dataset.aiDetectorBadgeInjected) {
     return;
   }
-  imgElement.dataset.aiDetectorBadgeInjected = 'loading';
+  targetEl.dataset.aiDetectorBadgeInjected = 'loading';
 
-  const parent = imgElement.parentElement;
-  if (!parent) return;
+  let container: HTMLElement;
+  let relativeTop = 4;
+  let relativeRight = 4;
 
-  const parentStyle = window.getComputedStyle(parent);
-  if (parentStyle.position === 'static') {
-    parent.style.position = 'relative';
+  if (targetEl instanceof HTMLImageElement && targetEl.parentElement) {
+    container = targetEl.parentElement;
+    const parentStyle = window.getComputedStyle(container);
+    if (parentStyle.position === 'static') {
+      container.style.position = 'relative';
+    }
+
+    const imgRect = targetEl.getBoundingClientRect();
+    const parentRect = container.getBoundingClientRect();
+    relativeTop = Math.max(0, imgRect.top - parentRect.top + 4);
+    relativeRight = Math.max(0, parentRect.right - imgRect.right + 4);
+  } else {
+    container = targetEl;
+    const containerStyle = window.getComputedStyle(container);
+    if (containerStyle.position === 'static') {
+      container.style.position = 'relative';
+    }
   }
-
-  const imgRect = imgElement.getBoundingClientRect();
-  const parentRect = parent.getBoundingClientRect();
-
-  const relativeTop = imgRect.top - parentRect.top;
-  const relativeRight = parentRect.right - imgRect.right;
 
   const host = document.createElement('div');
   host.className = 'ai-detector-badge-host';
   host.style.position = 'absolute';
-  host.style.top = `${Math.max(0, relativeTop + 4)}px`;
-  host.style.right = `${Math.max(0, relativeRight + 4)}px`;
+  host.style.top = `${relativeTop}px`;
+  host.style.right = `${relativeRight}px`;
   host.style.left = 'auto';
 
   const shadow = host.attachShadow({ mode: 'open' });
@@ -184,24 +193,24 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
   shadow.appendChild(badgeEl);
   shadow.appendChild(tooltipEl);
 
-  parent.appendChild(host);
+  container.appendChild(host);
 }
 
-export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisResult): void {
-  if (imgElement.dataset.aiDetectorBadgeInjected === 'true') {
+export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
+  if (targetEl.dataset.aiDetectorBadgeInjected === 'true') {
     return;
   }
 
   // Ensure loading badge is created if not already present
-  if (imgElement.dataset.aiDetectorBadgeInjected !== 'loading') {
-    injectLoadingBadge(imgElement);
+  if (targetEl.dataset.aiDetectorBadgeInjected !== 'loading') {
+    injectLoadingBadge(targetEl);
   }
-  imgElement.dataset.aiDetectorBadgeInjected = 'true';
+  targetEl.dataset.aiDetectorBadgeInjected = 'true';
 
-  const parent = imgElement.parentElement;
-  if (!parent) return;
+  const container = targetEl instanceof HTMLImageElement ? targetEl.parentElement : targetEl;
+  if (!container) return;
 
-  const host = parent.querySelector('.ai-detector-badge-host');
+  const host = container.querySelector('.ai-detector-badge-host');
   if (!host || !host.shadowRoot) return;
 
   const scorePercent = Math.round(result.aiScore * 100);
@@ -267,14 +276,14 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
   }
 }
 
-export function removeBadge(imgElement: HTMLImageElement): void {
-  delete imgElement.dataset.aiDetectorBadgeInjected;
-  delete imgElement.dataset.aiDetectorProcessed;
+export function removeBadge(targetEl: HTMLElement): void {
+  delete targetEl.dataset.aiDetectorBadgeInjected;
+  delete targetEl.dataset.aiDetectorProcessed;
 
-  const parent = imgElement.parentElement;
-  if (!parent) return;
+  const container = targetEl instanceof HTMLImageElement ? targetEl.parentElement : targetEl;
+  if (!container) return;
 
-  const host = parent.querySelector('.ai-detector-badge-host');
+  const host = container.querySelector('.ai-detector-badge-host');
   if (host) {
     host.remove();
   }
