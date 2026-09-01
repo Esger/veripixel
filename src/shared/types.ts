@@ -30,6 +30,4 @@ export type ExtensionMessage =
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }
-  | { type: 'FETCH_MODEL_BUFFER' }
-  | { type: 'MODEL_BUFFER_RESULT'; buffer: number[] | null }
   | { type: 'OFFSCREEN_READY' };
