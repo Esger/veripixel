@@ -22,8 +22,8 @@ export async function extractRuleOfThirdsPatches(
   const { width, height } = imageBitmap;
   const patches: ExtractedPatch[] = [];
 
-  // Fallback for small images (dimensions close to or smaller than targetSize): single center crop/fit
-  if (width < targetSize || height < targetSize || (width < targetSize * 1.35 && height < targetSize * 1.35)) {
+  // Fallback for small/medium images (< 2x targetSize = 448px): 1 single center crop/fit to save 75% WASM inference time
+  if (width < targetSize * 2 || height < targetSize * 2) {
     const canvas = document.createElement('canvas');
     canvas.width = targetSize;
     canvas.height = targetSize;

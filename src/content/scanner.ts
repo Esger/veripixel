@@ -150,9 +150,6 @@ function scanDOM(): void {
     const bg = el instanceof HTMLImageElement ? '' : window.getComputedStyle(el).backgroundImage;
     if (el instanceof HTMLImageElement || (bg && bg !== 'none')) {
       observer.observe(el);
-      if (!el.dataset.aiDetectorProcessed) {
-        processElement(el);
-      }
     }
   });
 }
@@ -170,13 +167,11 @@ const mutationObserver = new MutationObserver((mutations) => {
         if (node instanceof HTMLElement) {
           if (node instanceof HTMLImageElement || window.getComputedStyle(node).backgroundImage !== 'none') {
             observer.observe(node);
-            processElement(node);
           }
           node.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span').forEach((child) => {
             const bg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
             if (child instanceof HTMLImageElement || (bg && bg !== 'none')) {
               observer.observe(child);
-              processElement(child);
             }
           });
         }
@@ -185,7 +180,6 @@ const mutationObserver = new MutationObserver((mutations) => {
       if (mutation.target instanceof HTMLElement) {
         delete mutation.target.dataset.aiDetectorProcessed;
         observer.observe(mutation.target);
-        processElement(mutation.target);
       }
     }
   }

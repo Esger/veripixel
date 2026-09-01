@@ -1,9 +1,9 @@
 import * as ort from 'onnxruntime-web';
 import { canvasToTensor } from './tensor-utils';
 
-// Configure ONNX WASM path relative to extension root
+// Configure ONNX WASM path and multi-threading relative to extension root
 ort.env.wasm.wasmPaths = '/assets/';
-ort.env.wasm.numThreads = 1;
+ort.env.wasm.numThreads = Math.min(4, typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2);
 
 const DB_NAME = 'AI_DETECTOR_DB';
 const DB_VERSION = 1;
