@@ -9,8 +9,11 @@ function isValidTargetImage(img: HTMLImageElement): boolean {
   const src = img.currentSrc || img.src || '';
   if (!src) return false;
 
-  // Allow http, https, data URIs, and blob URIs
+  // Allow http, https, data URIs, and blob URIs (except SVG vector graphics)
   if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+    return false;
+  }
+  if (src.includes('.svg')) {
     return false;
   }
 

@@ -16,11 +16,7 @@ export async function extractRuleOfThirdsPatches(
   try {
     imageBitmap = await createImageBitmap(blob);
   } catch (err) {
-    console.warn('[PatchExtractor] Could not decode image bitmap:', err);
-    const canvas = document.createElement('canvas');
-    canvas.width = targetSize;
-    canvas.height = targetSize;
-    return [{ position: 'center', patchIndex: 0, canvas }];
+    return [];
   }
 
   const { width, height } = imageBitmap;

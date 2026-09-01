@@ -36,8 +36,12 @@ const queue = new ConcurrencyQueue(1);
 
 // Extract metadata using exifr
 async function extractMetadata(blob: Blob): Promise<MetadataResult> {
+  if (blob.type && blob.type.includes('svg')) {
+    return { exifPresent: false, c2paPresent: false, qualityScore: 1.0 };
+  }
+
   try {
-    const exifData = await exifr.parse(blob, ['Make', 'Model', 'Software', 'DateTimeOriginal']);
+    const exifData = await exifr.parse(blob, ['Make', 'Model', 'Software', 'DateTimeOriginal']).catch(() => null);
     const exifPresent = !!(exifData && (exifData.Make || exifData.Model));
     const cameraModel = exifData?.Model ? `${exifData.Make || ''} ${exifData.Model}`.trim() : undefined;
 
@@ -76,6 +80,17 @@ async function processImageBuffer(imageUrl: string, buffer: number[], contentTyp
 
     // 2. Extract EXIF / Metadata
     const metadata = await extractMetadata(blob);
+
+    if (patches.length === 0) {
+      return {
+        imageUrl,
+        status: 'complete',
+        aiScore: 0.05,
+        patchScores: [],
+        metadata,
+        timestamp: Date.now()
+      };
+    }
 
     // 3. Compute patch scores via ONNX Runtime Web / Model Runner (sequential pass to prevent WASM session concurrency errors)
     const patchScores: PatchResult[] = [];
