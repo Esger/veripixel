@@ -60,30 +60,29 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
-// Download ONNX model from remote CDN / Hugging Face or local asset fallback
+// Download ONNX model weights via Background Service Worker
 async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
-  const modelUrls = [
-    'https://huggingface.co/haywoodsloan/ai-image-detector-deploy/resolve/main/model.onnx',
-    'https://huggingface.co/Organika/sdxl-detector/resolve/main/model.onnx',
-    '/assets/model.onnx'
-  ];
-
-  for (const url of modelUrls) {
-    try {
-      console.log(`[ModelRunner] Attempting to fetch ONNX model from: ${url}`);
-      const res = await fetch(url);
-      if (res.ok) {
-        const buffer = await res.arrayBuffer();
-        if (buffer.byteLength > 1024) {
-          console.log(`[ModelRunner] Downloaded ONNX model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB) from ${url}`);
-          return buffer;
-        }
-      }
-    } catch (err) {
-      console.warn(`[ModelRunner] Fetch failed for model URL ${url}:`, err);
+  return new Promise((resolve) => {
+    if (!chrome?.runtime?.sendMessage) {
+      resolve(null);
+      return;
     }
-  }
-  return null;
+    console.log('[ModelRunner] Requesting Background Service Worker to download ONNX model weights...');
+    chrome.runtime.sendMessage({ type: 'FETCH_MODEL_BUFFER' }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn('[ModelRunner] Service worker fetch message error:', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
+      if (response && response.buffer && Array.isArray(response.buffer)) {
+        const uint8Array = new Uint8Array(response.buffer);
+        console.log(`[ModelRunner] Received ONNX model buffer (${(uint8Array.byteLength / 1024 / 1024).toFixed(1)} MB) from Background.`);
+        resolve(uint8Array.buffer);
+      } else {
+        resolve(null);
+      }
+    });
+  });
 }
 
 // Load and initialize ONNX Runtime Web InferenceSession

@@ -73,10 +73,40 @@ async function fetchImageBuffer(url: string): Promise<{ buffer: number[]; conten
   }
 }
 
+async function fetchModelBinary(): Promise<number[] | null> {
+  const modelUrls = [
+    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4.onnx',
+    'https://huggingface.co/angelhd25/ull-ai-image-detector/resolve/main/commfor384_web_fp32.onnx'
+  ];
+
+  for (const url of modelUrls) {
+    try {
+      console.log(`[Background] Downloading ONNX model weights from: ${url}`);
+      const response = await fetch(url);
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        if (buffer.byteLength > 1024 * 100) {
+          console.log(`[Background] Successfully downloaded ONNX model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
+          return Array.from(new Uint8Array(buffer));
+        }
+      }
+    } catch (err) {
+      console.warn(`[Background] Failed to download ONNX model from ${url}:`, err);
+    }
+  }
+  return null;
+}
+
 // Listen for messages from Content Scripts, Popup, or Offscreen Document
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   (async () => {
     try {
+      if (message.type === 'FETCH_MODEL_BUFFER') {
+        const buffer = await fetchModelBinary();
+        sendResponse({ type: 'MODEL_BUFFER_RESULT', buffer });
+        return;
+      }
+
       if (message.type === 'ANALYZE_IMAGE') {
         const { imageUrl } = message;
 

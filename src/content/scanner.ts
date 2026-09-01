@@ -17,6 +17,10 @@ function isValidTargetImage(img: HTMLImageElement): boolean {
 }
 
 function processImage(img: HTMLImageElement): void {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+
   if (img.dataset.aiDetectorProcessed === 'true') {
     return;
   }
