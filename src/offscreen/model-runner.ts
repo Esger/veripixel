@@ -60,9 +60,34 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
+let isDownloading = false;
+
+// Trigger background download of model weights into IndexedDB without blocking current scans
+function triggerBackgroundModelDownload(): void {
+  if (isDownloading) return;
+  isDownloading = true;
+
+  console.log('[ModelRunner] Starting background download of ONNX model weights...');
+  downloadModelBuffer()
+    .then(async (buffer) => {
+      if (buffer) {
+        await cacheModelBuffer(buffer);
+        console.log('[ModelRunner] ONNX model weights stored in IndexedDB. Ready for future scans!');
+        sessionPromise = null;
+      }
+    })
+    .catch((err) => {
+      console.warn('[ModelRunner] Background model download failed:', err);
+    })
+    .finally(() => {
+      isDownloading = false;
+    });
+}
+
 // Download ONNX model weights directly in offscreen document
 async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
   const modelUrls = [
+    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4f16.onnx',
     'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4.onnx',
     'https://huggingface.co/angelhd25/ull-ai-image-detector/resolve/main/commfor384_web_fp32.onnx'
   ];
@@ -93,18 +118,10 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
 
   sessionPromise = (async () => {
     try {
-      let modelBuffer = await getCachedModelBuffer();
+      const modelBuffer = await getCachedModelBuffer();
       if (!modelBuffer) {
-        console.log('[ModelRunner] No cached ONNX model in IndexedDB. Downloading model weights...');
-        modelBuffer = await downloadModelBuffer();
-        if (modelBuffer) {
-          await cacheModelBuffer(modelBuffer);
-          console.log('[ModelRunner] ONNX model successfully stored in IndexedDB.');
-        }
-      }
-
-      if (!modelBuffer) {
-        console.warn('[ModelRunner] Could not obtain ONNX model weights.');
+        console.log('[ModelRunner] No cached ONNX model in IndexedDB. Triggering background download...');
+        triggerBackgroundModelDownload();
         return null;
       }
 
@@ -117,6 +134,7 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
       return session;
     } catch (err) {
       console.error('[ModelRunner] Error creating ONNX InferenceSession:', err);
+      sessionPromise = null;
       return null;
     }
   })();
