@@ -20,13 +20,9 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
   const relativeTop = imgRect.top - parentRect.top;
   const relativeRight = parentRect.right - imgRect.right;
 
-  const imgZIndexStr = window.getComputedStyle(imgElement).zIndex;
-  const baseZIndex = imgZIndexStr && !isNaN(parseInt(imgZIndexStr)) ? parseInt(imgZIndexStr) + 1 : 10;
-
   const host = document.createElement('div');
   host.className = 'ai-detector-badge-host';
   host.style.position = 'absolute';
-  host.style.zIndex = `${baseZIndex}`;
   host.style.top = `${Math.max(0, relativeTop + 4)}px`;
   host.style.right = `${Math.max(0, relativeRight + 4)}px`;
   host.style.left = 'auto';
@@ -73,22 +69,20 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
       animation: cycleColors 1.2s infinite linear;
     }
     .tooltip {
-      display: none;
-      position: absolute;
-      top: 28px;
-      right: 0;
-      width: 220px;
-      background: #0F172A;
+      margin: 0;
+      padding: 12px;
       border: 1px solid #334155;
       border-radius: 10px;
-      padding: 12px;
+      background: #0F172A;
       color: #F8FAFC;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 12px;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      z-index: 100000;
+      width: 220px;
+      position: fixed;
+      inset: auto;
     }
-    .tooltip.visible {
+    .tooltip:popover-open {
       display: block;
     }
     .tooltip-header {
@@ -140,6 +134,7 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
   const tooltipEl = document.createElement('div');
   tooltipEl.className = 'tooltip';
   tooltipEl.id = 'tooltip-el';
+  tooltipEl.setAttribute('popover', 'manual');
   tooltipEl.innerHTML = `
     <div style="font-weight:600; color: #94A3B8;">Analyzing image with AI model...</div>
   `;
@@ -165,32 +160,23 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
     tooltipEl.addEventListener(type, stopOnly);
   });
 
-  badgeEl.addEventListener('click', () => {
-    const isVisible = tooltipEl.classList.toggle('visible');
-    if (isVisible) {
-      host.style.zIndex = '1000';
-      if (parent) {
-        const comp = window.getComputedStyle(parent);
-        if (comp.overflow === 'hidden' || comp.overflowX === 'hidden' || comp.overflowY === 'hidden') {
-          parent.dataset.aiDetectorOrigOverflow = parent.style.overflow || 'hidden';
-          parent.style.overflow = 'visible';
-        }
-      }
-    } else {
-      host.style.zIndex = `${baseZIndex}`;
-      if (parent && parent.dataset.aiDetectorOrigOverflow) {
-        parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
-        delete parent.dataset.aiDetectorOrigOverflow;
-      }
+  badgeEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (tooltipEl.matches && tooltipEl.matches(':popover-open')) {
+      tooltipEl.hidePopover();
+    } else if (typeof tooltipEl.showPopover === 'function') {
+      const badgeRect = badgeEl.getBoundingClientRect();
+      tooltipEl.style.top = `${badgeRect.bottom + 4}px`;
+      tooltipEl.style.left = `${Math.max(10, badgeRect.right - 220)}px`;
+      tooltipEl.showPopover();
     }
   });
 
   document.addEventListener('click', () => {
-    tooltipEl.classList.remove('visible');
-    host.style.zIndex = `${baseZIndex}`;
-    if (parent && parent.dataset.aiDetectorOrigOverflow) {
-      parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
-      delete parent.dataset.aiDetectorOrigOverflow;
+    if (tooltipEl.matches && tooltipEl.matches(':popover-open')) {
+      tooltipEl.hidePopover();
     }
   });
 
