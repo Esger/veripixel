@@ -181,15 +181,14 @@ export async function runPatchInference(patchCanvas: HTMLCanvasElement): Promise
     const outputTensor = results[outputName];
     const outputData = outputTensor.data as Float32Array;
 
-    // Output parsing: softmax or single binary probability score
+    // Output parsing for SMOGY ONNX model:
+    // id2label mapping: {"0": "artificial" (AI), "1": "human" (Real)}
     let score = 0.5;
     if (outputData.length >= 2) {
-      // Binary classification softmax: [p_real, p_ai]
-      const exp0 = Math.exp(outputData[0]);
-      const exp1 = Math.exp(outputData[1]);
-      score = exp1 / (exp0 + exp1);
+      const expArtificial = Math.exp(outputData[0]); // Index 0 = AI
+      const expHuman = Math.exp(outputData[1]);      // Index 1 = Real
+      score = expArtificial / (expArtificial + expHuman);
     } else if (outputData.length === 1) {
-      // Sigmoid output: p_ai
       score = 1 / (1 + Math.exp(-outputData[0]));
     }
 
