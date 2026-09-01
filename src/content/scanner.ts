@@ -3,15 +3,28 @@ import { ExtensionMessage } from '../shared/types';
 
 console.log('[ContentScript] AI Image Detector scanner initialized.');
 
-const MIN_IMAGE_SIZE = 100; // Ignore tiny icons/buttons
+const MIN_IMAGE_SIZE = 50; // Catch thumbnails, cards, and avatars (>= 50px)
 
 function isValidTargetImage(img: HTMLImageElement): boolean {
-  if (!img.src || !img.src.startsWith('http')) return false;
+  const src = img.currentSrc || img.src || '';
+  if (!src) return false;
+
+  // Allow http, https, data URIs, and blob URIs
+  if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+    return false;
+  }
+
+  // Ignore 1x1 transparent tracking pixels / base64 placeholders
+  if (src.startsWith('data:') && src.length < 200) {
+    return false;
+  }
 
   const width = img.naturalWidth || img.width || 0;
   const height = img.naturalHeight || img.height || 0;
 
-  if (width < MIN_IMAGE_SIZE || height < MIN_IMAGE_SIZE) return false;
+  if (width < MIN_IMAGE_SIZE || height < MIN_IMAGE_SIZE) {
+    return false;
+  }
 
   return true;
 }
@@ -25,7 +38,7 @@ function processImage(img: HTMLImageElement): void {
     return;
   }
 
-  // If image dimensions are not loaded yet, wait for load event
+  // If image dimensions are not loaded yet, attach load event listener
   if (!img.complete || (img.naturalWidth === 0 && img.width === 0)) {
     const onLoad = () => {
       img.removeEventListener('load', onLoad);
@@ -42,7 +55,7 @@ function processImage(img: HTMLImageElement): void {
   img.dataset.aiDetectorProcessed = 'true';
   injectLoadingBadge(img);
 
-  const imageUrl = img.src;
+  const imageUrl = img.currentSrc || img.src;
 
   try {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
@@ -83,32 +96,55 @@ const observer = new IntersectionObserver(
   },
   {
     root: null,
-    rootMargin: '100px',
-    threshold: 0.1
+    rootMargin: '200px',
+    threshold: 0.01
   }
 );
 
 function scanDOM(): void {
   const images = document.querySelectorAll('img');
-  images.forEach((img) => observer.observe(img));
+  images.forEach((img) => {
+    observer.observe(img);
+    if (!img.dataset.aiDetectorProcessed) {
+      processImage(img);
+    }
+  });
 }
 
-// Scan initially and observe DOM mutations for dynamic content (infinite scroll)
+// Initial DOM Scan
 scanDOM();
 
+// MutationObserver for dynamically added nodes AND src/srcset attribute changes
 const mutationObserver = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
-    mutation.addedNodes.forEach((node) => {
-      if (node instanceof HTMLImageElement) {
-        observer.observe(node);
-      } else if (node instanceof HTMLElement) {
-        node.querySelectorAll('img').forEach((img) => observer.observe(img));
+    if (mutation.type === 'childList') {
+      mutation.addedNodes.forEach((node) => {
+        if (node instanceof HTMLImageElement) {
+          observer.observe(node);
+          processImage(node);
+        } else if (node instanceof HTMLElement) {
+          node.querySelectorAll('img').forEach((img) => {
+            observer.observe(img);
+            processImage(img);
+          });
+        }
+      });
+    } else if (mutation.type === 'attributes') {
+      if (mutation.target instanceof HTMLImageElement) {
+        delete mutation.target.dataset.aiDetectorProcessed;
+        observer.observe(mutation.target);
+        processImage(mutation.target);
       }
-    });
+    }
   }
 });
 
-mutationObserver.observe(document.body, { childList: true, subtree: true });
+mutationObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['src', 'srcset', 'data-src']
+});
 
 // Rescan DOM whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {
