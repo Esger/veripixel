@@ -60,6 +60,32 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
+// Download ONNX model from remote CDN / Hugging Face or local asset fallback
+async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
+  const modelUrls = [
+    'https://huggingface.co/haywoodsloan/ai-image-detector-deploy/resolve/main/model.onnx',
+    'https://huggingface.co/Organika/sdxl-detector/resolve/main/model.onnx',
+    '/assets/model.onnx'
+  ];
+
+  for (const url of modelUrls) {
+    try {
+      console.log(`[ModelRunner] Attempting to fetch ONNX model from: ${url}`);
+      const res = await fetch(url);
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        if (buffer.byteLength > 1024) {
+          console.log(`[ModelRunner] Downloaded ONNX model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB) from ${url}`);
+          return buffer;
+        }
+      }
+    } catch (err) {
+      console.warn(`[ModelRunner] Fetch failed for model URL ${url}:`, err);
+    }
+  }
+  return null;
+}
+
 // Load and initialize ONNX Runtime Web InferenceSession
 export async function getInferenceSession(): Promise<ort.InferenceSession | null> {
   if (sessionPromise) {
@@ -68,9 +94,18 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
 
   sessionPromise = (async () => {
     try {
-      const modelBuffer = await getCachedModelBuffer();
+      let modelBuffer = await getCachedModelBuffer();
       if (!modelBuffer) {
-        console.log('[ModelRunner] No cached ONNX model found in IndexedDB yet.');
+        console.log('[ModelRunner] No cached ONNX model in IndexedDB. Downloading model weights...');
+        modelBuffer = await downloadModelBuffer();
+        if (modelBuffer) {
+          await cacheModelBuffer(modelBuffer);
+          console.log('[ModelRunner] ONNX model successfully stored in IndexedDB.');
+        }
+      }
+
+      if (!modelBuffer) {
+        console.warn('[ModelRunner] Could not obtain ONNX model weights.');
         return null;
       }
 
