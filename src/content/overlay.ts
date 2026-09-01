@@ -20,10 +20,13 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
   const relativeTop = imgRect.top - parentRect.top;
   const relativeRight = parentRect.right - imgRect.right;
 
+  const imgZIndexStr = window.getComputedStyle(imgElement).zIndex;
+  const baseZIndex = imgZIndexStr && !isNaN(parseInt(imgZIndexStr)) ? parseInt(imgZIndexStr) + 1 : 10;
+
   const host = document.createElement('div');
   host.className = 'ai-detector-badge-host';
   host.style.position = 'absolute';
-  host.style.zIndex = '99999';
+  host.style.zIndex = `${baseZIndex}`;
   host.style.top = `${Math.max(0, relativeTop + 4)}px`;
   host.style.right = `${Math.max(0, relativeRight + 4)}px`;
   host.style.left = 'auto';
@@ -164,20 +167,27 @@ export function injectLoadingBadge(imgElement: HTMLImageElement): void {
 
   badgeEl.addEventListener('click', () => {
     const isVisible = tooltipEl.classList.toggle('visible');
-    if (isVisible && parent) {
-      const comp = window.getComputedStyle(parent);
-      if (comp.overflow === 'hidden' || comp.overflowX === 'hidden' || comp.overflowY === 'hidden') {
-        parent.dataset.aiDetectorOrigOverflow = parent.style.overflow || 'hidden';
-        parent.style.overflow = 'visible';
+    if (isVisible) {
+      host.style.zIndex = '1000';
+      if (parent) {
+        const comp = window.getComputedStyle(parent);
+        if (comp.overflow === 'hidden' || comp.overflowX === 'hidden' || comp.overflowY === 'hidden') {
+          parent.dataset.aiDetectorOrigOverflow = parent.style.overflow || 'hidden';
+          parent.style.overflow = 'visible';
+        }
       }
-    } else if (parent && parent.dataset.aiDetectorOrigOverflow) {
-      parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
-      delete parent.dataset.aiDetectorOrigOverflow;
+    } else {
+      host.style.zIndex = `${baseZIndex}`;
+      if (parent && parent.dataset.aiDetectorOrigOverflow) {
+        parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
+        delete parent.dataset.aiDetectorOrigOverflow;
+      }
     }
   });
 
   document.addEventListener('click', () => {
     tooltipEl.classList.remove('visible');
+    host.style.zIndex = `${baseZIndex}`;
     if (parent && parent.dataset.aiDetectorOrigOverflow) {
       parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
       delete parent.dataset.aiDetectorOrigOverflow;
