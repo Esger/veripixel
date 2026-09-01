@@ -12,9 +12,18 @@ export async function extractRuleOfThirdsPatches(
   blob: Blob,
   targetSize = 224
 ): Promise<ExtractedPatch[]> {
-  const imageBitmap = await createImageBitmap(blob);
-  const { width, height } = imageBitmap;
+  let imageBitmap: ImageBitmap;
+  try {
+    imageBitmap = await createImageBitmap(blob);
+  } catch (err) {
+    console.warn('[PatchExtractor] Could not decode image bitmap:', err);
+    const canvas = document.createElement('canvas');
+    canvas.width = targetSize;
+    canvas.height = targetSize;
+    return [{ position: 'center', patchIndex: 0, canvas }];
+  }
 
+  const { width, height } = imageBitmap;
   const patches: ExtractedPatch[] = [];
 
   // Fallback for small images (dimensions close to or smaller than targetSize): single center crop/fit

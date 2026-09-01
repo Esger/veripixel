@@ -57,12 +57,16 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
 }
 
 // Fetch cross-origin image bytes safely without CORS canvas taint issues
-async function fetchImageBuffer(url: string): Promise<number[] | null> {
+async function fetchImageBuffer(url: string): Promise<{ buffer: number[]; contentType: string } | null> {
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
     const buffer = await response.arrayBuffer();
-    return Array.from(new Uint8Array(buffer));
+    return {
+      buffer: Array.from(new Uint8Array(buffer)),
+      contentType
+    };
   } catch (err) {
     console.error(`[Background] Failed to fetch image ${url}:`, err);
     return null;
@@ -86,8 +90,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
         await ensureOffscreenDocumentExists();
 
         // Fetch CORS-safe buffer
-        const buffer = await fetchImageBuffer(imageUrl);
-        if (!buffer) {
+        const fetchedData = await fetchImageBuffer(imageUrl);
+        if (!fetchedData) {
           const errorResult: AnalysisResult = {
             imageUrl,
             status: 'error',
@@ -103,7 +107,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
         // Relay to Offscreen Document for ONNX & Metadata processing
         chrome.runtime.sendMessage(
-          { type: 'PROCESS_IMAGE_BUFFER', imageUrl, buffer },
+          {
+            type: 'PROCESS_IMAGE_BUFFER',
+            imageUrl,
+            buffer: fetchedData.buffer,
+            contentType: fetchedData.contentType
+          },
           async (response) => {
             if (chrome.runtime.lastError) {
               console.warn('[Background] Message error to offscreen:', chrome.runtime.lastError.message);

@@ -66,10 +66,10 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
 }
 
 // Process an incoming image array buffer
-async function processImageBuffer(imageUrl: string, buffer: number[]): Promise<AnalysisResult> {
+async function processImageBuffer(imageUrl: string, buffer: number[], contentType = 'image/jpeg'): Promise<AnalysisResult> {
   return queue.run(async () => {
     const uint8Array = new Uint8Array(buffer);
-    const blob = new Blob([uint8Array]);
+    const blob = new Blob([uint8Array], { type: contentType });
 
     // 1. Extract 4 patches on rule-of-thirds grid
     const patches = await extractRuleOfThirdsPatches(blob, 224);
@@ -115,7 +115,7 @@ async function processImageBuffer(imageUrl: string, buffer: number[]): Promise<A
 // Listen for background service worker requests
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'PROCESS_IMAGE_BUFFER') {
-    processImageBuffer(message.imageUrl, message.buffer)
+    processImageBuffer(message.imageUrl, message.buffer, message.contentType)
       .then((result) => sendResponse({ result }))
       .catch((err) => {
         console.error('[Offscreen] Error processing image:', err);
