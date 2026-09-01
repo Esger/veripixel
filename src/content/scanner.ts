@@ -109,3 +109,10 @@ const mutationObserver = new MutationObserver((mutations) => {
 });
 
 mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+// Rescan DOM whenever user switches back to this tab
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    scanDOM();
+  }
+});
