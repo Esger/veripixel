@@ -19,22 +19,30 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
     statusText = 'Possible AI/Edited';
   }
 
-  // Create host container positioned relative to image
+  const parent = imgElement.parentElement;
+  if (!parent) return;
+
+  // Ensure parent has relative positioning context before computing bounding rects
+  const parentStyle = window.getComputedStyle(parent);
+  if (parentStyle.position === 'static') {
+    parent.style.position = 'relative';
+  }
+
+  // Calculate image position relative to its parent container
+  const imgRect = imgElement.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+
+  const relativeTop = imgRect.top - parentRect.top;
+  const relativeRight = parentRect.right - imgRect.right;
+
+  // Create host container positioned at top-right corner of image
   const host = document.createElement('div');
   host.className = 'ai-detector-badge-host';
   host.style.position = 'absolute';
   host.style.zIndex = '99999';
-
-  // Calculate position relative to image in DOM
-  const rect = imgElement.getBoundingClientRect();
-  const parent = imgElement.offsetParent || document.body;
-  const parentRect = parent.getBoundingClientRect();
-
-  const top = rect.top - parentRect.top + 8;
-  const left = rect.left - parentRect.left + rect.width - 70;
-
-  host.style.top = `${Math.max(8, top)}px`;
-  host.style.left = `${Math.max(8, left)}px`;
+  host.style.top = `${Math.max(0, relativeTop + 4)}px`;
+  host.style.right = `${Math.max(0, relativeRight + 4)}px`;
+  host.style.left = 'auto';
 
   // Attach Shadow DOM to insulate styles from target webpage
   const shadow = host.attachShadow({ mode: 'open' });
@@ -190,25 +198,31 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
   });
 
   badgeEl.addEventListener('click', () => {
-    tooltipEl.classList.toggle('visible');
+    const isVisible = tooltipEl.classList.toggle('visible');
+    if (isVisible && parent) {
+      const comp = window.getComputedStyle(parent);
+      if (comp.overflow === 'hidden' || comp.overflowX === 'hidden' || comp.overflowY === 'hidden') {
+        parent.dataset.aiDetectorOrigOverflow = parent.style.overflow || 'hidden';
+        parent.style.overflow = 'visible';
+      }
+    } else if (parent && parent.dataset.aiDetectorOrigOverflow) {
+      parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
+      delete parent.dataset.aiDetectorOrigOverflow;
+    }
   });
 
   // Hide tooltip when clicking outside
   document.addEventListener('click', () => {
     tooltipEl.classList.remove('visible');
+    if (parent && parent.dataset.aiDetectorOrigOverflow) {
+      parent.style.overflow = parent.dataset.aiDetectorOrigOverflow === 'hidden' ? '' : parent.dataset.aiDetectorOrigOverflow;
+      delete parent.dataset.aiDetectorOrigOverflow;
+    }
   });
 
   shadow.appendChild(styleEl);
   shadow.appendChild(badgeEl);
   shadow.appendChild(tooltipEl);
 
-  // Append host relative to image parent
-  if (imgElement.parentElement) {
-    // Ensure parent has position context if static
-    const parentStyle = window.getComputedStyle(imgElement.parentElement);
-    if (parentStyle.position === 'static') {
-      imgElement.parentElement.style.position = 'relative';
-    }
-    imgElement.parentElement.appendChild(host);
-  }
+  parent.appendChild(host);
 }
