@@ -5,6 +5,14 @@ console.log('[ContentScript] AI Image Detector scanner initialized.');
 
 const MIN_IMAGE_SIZE = 50; // Catch thumbnails, cards, and avatars (>= 50px)
 
+function isExtensionContextValid(): boolean {
+  try {
+    return !!(chrome && chrome.runtime && chrome.runtime.id);
+  } catch (e) {
+    return false;
+  }
+}
+
 function getElementImageUrl(el: HTMLElement): string | null {
   if (el instanceof HTMLImageElement) {
     return el.currentSrc || el.src || null;
@@ -57,7 +65,7 @@ function isValidTargetElement(el: HTMLElement): boolean {
 }
 
 function processElement(el: HTMLElement): void {
-  if (!chrome?.runtime?.sendMessage) {
+  if (!isExtensionContextValid()) {
     return;
   }
 
@@ -89,7 +97,7 @@ function processElement(el: HTMLElement): void {
   }
 
   try {
-    if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+    if (!isExtensionContextValid()) {
       removeBadge(el);
       return;
     }
@@ -97,7 +105,7 @@ function processElement(el: HTMLElement): void {
     chrome.runtime.sendMessage(
       { type: 'ANALYZE_IMAGE', imageUrl } as ExtensionMessage,
       (response) => {
-        if (chrome.runtime.lastError) {
+        if (!isExtensionContextValid() || chrome.runtime.lastError) {
           removeBadge(el);
           return;
         }
@@ -119,6 +127,7 @@ function processElement(el: HTMLElement): void {
 // Intersection Observer for lazy scanning
 const observer = new IntersectionObserver(
   (entries) => {
+    if (!isExtensionContextValid()) return;
     for (const entry of entries) {
       if (entry.isIntersecting && entry.target instanceof HTMLElement) {
         processElement(entry.target);
@@ -133,6 +142,8 @@ const observer = new IntersectionObserver(
 );
 
 function scanDOM(): void {
+  if (!isExtensionContextValid()) return;
+
   // Query <img> tags as well as elements commonly used for CSS background-images
   const elements = document.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span');
   elements.forEach((el) => {
@@ -151,6 +162,8 @@ scanDOM();
 
 // MutationObserver for dynamically added nodes AND src/srcset/style attribute changes
 const mutationObserver = new MutationObserver((mutations) => {
+  if (!isExtensionContextValid()) return;
+
   for (const mutation of mutations) {
     if (mutation.type === 'childList') {
       mutation.addedNodes.forEach((node) => {
@@ -187,6 +200,7 @@ mutationObserver.observe(document.body, {
 
 // Rescan DOM whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {
+  if (!isExtensionContextValid()) return;
   if (document.visibilityState === 'visible') {
     scanDOM();
   }
