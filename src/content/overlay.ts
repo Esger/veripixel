@@ -1,41 +1,25 @@
 import { AnalysisResult } from '../shared/types';
 
-export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisResult): void {
-  // Prevent duplicate badges
-  if (imgElement.dataset.aiDetectorBadgeInjected === 'true') {
+export function injectLoadingBadge(imgElement: HTMLImageElement): void {
+  if (imgElement.dataset.aiDetectorBadgeInjected) {
     return;
   }
-  imgElement.dataset.aiDetectorBadgeInjected = 'true';
-
-  const scorePercent = Math.round(result.aiScore * 100);
-  let color = '#10B981'; // Green (<30%)
-  let statusText = 'Likely Real';
-
-  if (scorePercent >= 70) {
-    color = '#EF4444'; // Red (>70%)
-    statusText = 'High AI Probability';
-  } else if (scorePercent >= 30) {
-    color = '#F59E0B'; // Orange (30-70%)
-    statusText = 'Possible AI/Edited';
-  }
+  imgElement.dataset.aiDetectorBadgeInjected = 'loading';
 
   const parent = imgElement.parentElement;
   if (!parent) return;
 
-  // Ensure parent has relative positioning context before computing bounding rects
   const parentStyle = window.getComputedStyle(parent);
   if (parentStyle.position === 'static') {
     parent.style.position = 'relative';
   }
 
-  // Calculate image position relative to its parent container
   const imgRect = imgElement.getBoundingClientRect();
   const parentRect = parent.getBoundingClientRect();
 
   const relativeTop = imgRect.top - parentRect.top;
   const relativeRight = parentRect.right - imgRect.right;
 
-  // Create host container positioned at top-right corner of image
   const host = document.createElement('div');
   host.className = 'ai-detector-badge-host';
   host.style.position = 'absolute';
@@ -44,10 +28,15 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
   host.style.right = `${Math.max(0, relativeRight + 4)}px`;
   host.style.left = 'auto';
 
-  // Attach Shadow DOM to insulate styles from target webpage
   const shadow = host.attachShadow({ mode: 'open' });
 
   const shadowStyles = `
+    @keyframes cycleColors {
+      0% { background-color: #10B981; box-shadow: 0 0 6px #10B981; }
+      33% { background-color: #F59E0B; box-shadow: 0 0 6px #F59E0B; }
+      66% { background-color: #EF4444; box-shadow: 0 0 6px #EF4444; }
+      100% { background-color: #10B981; box-shadow: 0 0 6px #10B981; }
+    }
     .badge {
       display: inline-flex;
       align-items: center;
@@ -60,10 +49,10 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 11px;
       font-weight: 600;
-      border: 1px solid ${color};
+      border: 1px solid #64748B;
       cursor: pointer;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      transition: transform 0.15s ease, border-color 0.3s ease;
       user-select: none;
     }
     .badge:hover {
@@ -74,8 +63,11 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
       width: 7px;
       height: 7px;
       border-radius: 50%;
-      background-color: ${color};
-      box-shadow: 0 0 6px ${color};
+      background-color: #10B981;
+      box-shadow: 0 0 6px #10B981;
+    }
+    .dot.loading {
+      animation: cycleColors 1.2s infinite linear;
     }
     .tooltip {
       display: none;
@@ -100,7 +92,6 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
       font-weight: 700;
       font-size: 13px;
       margin-bottom: 6px;
-      color: ${color};
       display: flex;
       justify-content: space-between;
     }
@@ -137,41 +128,17 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
 
   const badgeEl = document.createElement('div');
   badgeEl.className = 'badge';
+  badgeEl.id = 'badge-el';
   badgeEl.innerHTML = `
-    <span class="dot"></span>
-    <span>${scorePercent}%</span>
+    <span class="dot loading" id="dot-el"></span>
+    <span id="score-text">...</span>
   `;
 
   const tooltipEl = document.createElement('div');
   tooltipEl.className = 'tooltip';
-
-  const patchesHtml = result.patchScores
-    .map(
-      (p) =>
-        `<div class="patch-item">${p.position}: <strong style="color: ${p.aiScore >= 0.7 ? '#EF4444' : '#10B981'}">${Math.round(p.aiScore * 100)}%</strong></div>`
-    )
-    .join('');
-
+  tooltipEl.id = 'tooltip-el';
   tooltipEl.innerHTML = `
-    <div class="tooltip-header">
-      <span>${statusText}</span>
-      <span>${scorePercent}% AI</span>
-    </div>
-    <div class="tooltip-row">
-      <span>EXIF Camera:</span>
-      <span class="tooltip-val">${result.metadata.cameraModel || (result.metadata.exifPresent ? 'Present' : 'None/Stripped')}</span>
-    </div>
-    <div class="tooltip-row">
-      <span>C2PA Signature:</span>
-      <span class="tooltip-val">${result.metadata.c2paPresent ? 'Detected' : 'None'}</span>
-    </div>
-    <div class="tooltip-row">
-      <span>Quality score:</span>
-      <span class="tooltip-val">${Math.round(result.metadata.qualityScore * 100)}%</span>
-    </div>
-    <div class="patches-grid">
-      ${patchesHtml}
-    </div>
+    <div style="font-weight:600; color: #94A3B8;">Analyzing image with AI model...</div>
   `;
 
   const preventAndStop = (e: Event) => {
@@ -183,18 +150,16 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
     e.stopPropagation();
   };
 
-  // Prevent default action (e.g., <a> navigation) and stop propagation on clicks
-  ['click', 'auxclick'].forEach((eventType) => {
-    host.addEventListener(eventType, preventAndStop);
-    badgeEl.addEventListener(eventType, preventAndStop);
-    tooltipEl.addEventListener(eventType, preventAndStop);
+  ['click', 'auxclick'].forEach((type) => {
+    host.addEventListener(type, preventAndStop);
+    badgeEl.addEventListener(type, preventAndStop);
+    tooltipEl.addEventListener(type, preventAndStop);
   });
 
-  // Stop propagation for mouse, pointer, and touch events to avoid triggering container/link handlers
-  ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach((eventType) => {
-    host.addEventListener(eventType, stopOnly);
-    badgeEl.addEventListener(eventType, stopOnly);
-    tooltipEl.addEventListener(eventType, stopOnly);
+  ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach((type) => {
+    host.addEventListener(type, stopOnly);
+    badgeEl.addEventListener(type, stopOnly);
+    tooltipEl.addEventListener(type, stopOnly);
   });
 
   badgeEl.addEventListener('click', () => {
@@ -211,7 +176,6 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
     }
   });
 
-  // Hide tooltip when clicking outside
   document.addEventListener('click', () => {
     tooltipEl.classList.remove('visible');
     if (parent && parent.dataset.aiDetectorOrigOverflow) {
@@ -225,4 +189,97 @@ export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisR
   shadow.appendChild(tooltipEl);
 
   parent.appendChild(host);
+}
+
+export function injectImageBadge(imgElement: HTMLImageElement, result: AnalysisResult): void {
+  if (imgElement.dataset.aiDetectorBadgeInjected === 'true') {
+    return;
+  }
+
+  // Ensure loading badge is created if not already present
+  if (imgElement.dataset.aiDetectorBadgeInjected !== 'loading') {
+    injectLoadingBadge(imgElement);
+  }
+  imgElement.dataset.aiDetectorBadgeInjected = 'true';
+
+  const parent = imgElement.parentElement;
+  if (!parent) return;
+
+  const host = parent.querySelector('.ai-detector-badge-host');
+  if (!host || !host.shadowRoot) return;
+
+  const scorePercent = Math.round(result.aiScore * 100);
+  let color = '#10B981'; // Green (<30%)
+  let statusText = 'Likely Real';
+
+  if (scorePercent >= 70) {
+    color = '#EF4444'; // Red (>70%)
+    statusText = 'High AI Probability';
+  } else if (scorePercent >= 30) {
+    color = '#F59E0B'; // Orange (30-70%)
+    statusText = 'Possible AI/Edited';
+  }
+
+  const badgeEl = host.shadowRoot.querySelector('#badge-el') as HTMLElement | null;
+  const dotEl = host.shadowRoot.querySelector('#dot-el') as HTMLElement | null;
+  const scoreText = host.shadowRoot.querySelector('#score-text') as HTMLElement | null;
+  const tooltipEl = host.shadowRoot.querySelector('#tooltip-el') as HTMLElement | null;
+
+  if (badgeEl) {
+    badgeEl.style.borderColor = color;
+  }
+
+  if (dotEl) {
+    dotEl.classList.remove('loading');
+    dotEl.style.backgroundColor = color;
+    dotEl.style.boxShadow = `0 0 6px ${color}`;
+  }
+
+  if (scoreText) {
+    scoreText.textContent = `${scorePercent}%`;
+  }
+
+  if (tooltipEl) {
+    const patchesHtml = result.patchScores
+      .map(
+        (p) =>
+          `<div class="patch-item">${p.position}: <strong style="color: ${p.aiScore >= 0.7 ? '#EF4444' : '#10B981'}">${Math.round(p.aiScore * 100)}%</strong></div>`
+      )
+      .join('');
+
+    tooltipEl.innerHTML = `
+      <div class="tooltip-header" style="color: ${color}">
+        <span>${statusText}</span>
+        <span>${scorePercent}% AI</span>
+      </div>
+      <div class="tooltip-row">
+        <span>EXIF Camera:</span>
+        <span class="tooltip-val">${result.metadata.cameraModel || (result.metadata.exifPresent ? 'Present' : 'None/Stripped')}</span>
+      </div>
+      <div class="tooltip-row">
+        <span>C2PA Signature:</span>
+        <span class="tooltip-val">${result.metadata.c2paPresent ? 'Detected' : 'None'}</span>
+      </div>
+      <div class="tooltip-row">
+        <span>Quality score:</span>
+        <span class="tooltip-val">${Math.round(result.metadata.qualityScore * 100)}%</span>
+      </div>
+      <div class="patches-grid">
+        ${patchesHtml}
+      </div>
+    `;
+  }
+}
+
+export function removeBadge(imgElement: HTMLImageElement): void {
+  delete imgElement.dataset.aiDetectorBadgeInjected;
+  delete imgElement.dataset.aiDetectorProcessed;
+
+  const parent = imgElement.parentElement;
+  if (!parent) return;
+
+  const host = parent.querySelector('.ai-detector-badge-host');
+  if (host) {
+    host.remove();
+  }
 }

@@ -1,4 +1,4 @@
-import { injectImageBadge } from './overlay';
+import { injectImageBadge, injectLoadingBadge, removeBadge } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
 console.log('[ContentScript] AI Image Detector scanner initialized.');
@@ -40,12 +40,13 @@ function processImage(img: HTMLImageElement): void {
   }
 
   img.dataset.aiDetectorProcessed = 'true';
+  injectLoadingBadge(img);
 
   const imageUrl = img.src;
 
   try {
     if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-      delete img.dataset.aiDetectorProcessed;
+      removeBadge(img);
       return;
     }
 
@@ -53,7 +54,7 @@ function processImage(img: HTMLImageElement): void {
       { type: 'ANALYZE_IMAGE', imageUrl } as ExtensionMessage,
       (response) => {
         if (chrome.runtime.lastError) {
-          delete img.dataset.aiDetectorProcessed;
+          removeBadge(img);
           return;
         }
 
@@ -61,13 +62,13 @@ function processImage(img: HTMLImageElement): void {
           if (response.result.status === 'complete') {
             injectImageBadge(img, response.result);
           } else if (response.result.status === 'error') {
-            delete img.dataset.aiDetectorProcessed;
+            removeBadge(img);
           }
         }
       }
     );
   } catch (err) {
-    delete img.dataset.aiDetectorProcessed;
+    removeBadge(img);
   }
 }
 
