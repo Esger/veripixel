@@ -1,6 +1,7 @@
 import exifr from 'exifr';
 import { AnalysisResult, MetadataResult, PatchResult } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
+import { runPatchInference } from './model-runner';
 
 console.log('[Offscreen] Document script active.');
 
@@ -76,34 +77,29 @@ async function processImageBuffer(imageUrl: string, buffer: number[]): Promise<A
     // 2. Extract EXIF / Metadata
     const metadata = await extractMetadata(blob);
 
-    // 3. Compute patch scores (placeholder for ONNX model inference pass in Phase 2)
-    // For skeleton testing: perform heuristic analysis based on patch variance & EXIF presence
-    const patchScores: PatchResult[] = patches.map((patch) => {
-      // Calculate basic canvas pixel variance as test heuristic
-      const ctx = patch.canvas.getContext('2d');
-      let aiScore = 0.15; // default low probability
-      if (ctx) {
-        const imgData = ctx.getImageData(0, 0, patch.canvas.width, patch.canvas.height);
-        let sum = 0;
-        for (let i = 0; i < imgData.data.length; i += 4) {
-          sum += imgData.data[i];
-        }
-        const avg = sum / (imgData.data.length / 4);
-        // Slight variation per patch
-        aiScore = (avg % 100) / 200 + (metadata.exifPresent ? 0.05 : 0.2);
-      }
+    // 3. Compute patch scores via ONNX Runtime Web / Model Runner
+    const patchScores: PatchResult[] = await Promise.all(
+      patches.map(async (patch) => {
+        const aiScore = await runPatchInference(patch.canvas);
+        return {
+          patchIndex: patch.patchIndex,
+          position: patch.position,
+          aiScore
+        };
+      })
+    );
 
-      return {
-        patchIndex: patch.patchIndex,
-        position: patch.position,
-        aiScore: Math.min(0.99, Math.max(0.01, aiScore))
-      };
-    });
-
-    // Aggregate overall score (max score among patches + metadata factor)
+    // Aggregate overall score (max score among patches + metadata adjustment)
     const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
     const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
-    const aggregatedScore = parseFloat((maxPatchScore * 0.6 + avgPatchScore * 0.4).toFixed(2));
+
+    // Apply metadata adjustments (C2PA digital signature reduces AI confidence, missing EXIF slightly increases probability)
+    let baseScore = maxPatchScore * 0.6 + avgPatchScore * 0.4;
+    if (metadata.c2paPresent) {
+      baseScore = Math.max(0.01, baseScore - 0.3);
+    }
+
+    const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
 
     return {
       imageUrl,

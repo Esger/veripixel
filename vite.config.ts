@@ -11,6 +11,14 @@ export default defineConfig({
         {
           src: 'manifest.json',
           dest: '.'
+        },
+        {
+          src: 'node_modules/onnxruntime-web/dist/*.wasm',
+          dest: 'assets'
+        },
+        {
+          src: 'node_modules/onnxruntime-web/dist/*.mjs',
+          dest: 'assets'
         }
       ]
     })
