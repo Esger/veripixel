@@ -32,7 +32,7 @@ class ConcurrencyQueue {
   }
 }
 
-const queue = new ConcurrencyQueue(2);
+const queue = new ConcurrencyQueue(1);
 
 // Extract metadata using exifr
 async function extractMetadata(blob: Blob): Promise<MetadataResult> {

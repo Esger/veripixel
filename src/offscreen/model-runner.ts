@@ -124,6 +124,8 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
   return sessionPromise;
 }
 
+let inferenceLock: Promise<void> = Promise.resolve();
+
 /**
  * Runs neural network inference on a single 224x224 patch canvas.
  * Returns probability float (0.0 - 1.0) indicating AI generation confidence.
@@ -142,6 +144,14 @@ export async function runPatchInference(patchCanvas: HTMLCanvasElement): Promise
     const avg = sum / (data.length / 16);
     return Math.min(0.95, Math.max(0.05, (avg % 100) / 100));
   }
+
+  // Enforce strict Mutex lock so session.run is never invoked concurrently across any patch or image
+  let releaseLock: () => void = () => {};
+  const currentLock = inferenceLock;
+  inferenceLock = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  await currentLock;
 
   try {
     const inputTensor = canvasToTensor(patchCanvas, 224);
@@ -169,5 +179,7 @@ export async function runPatchInference(patchCanvas: HTMLCanvasElement): Promise
   } catch (err) {
     console.error('[ModelRunner] Patch inference error:', err);
     return 0.5;
+  } finally {
+    releaseLock();
   }
 }
