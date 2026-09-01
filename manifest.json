@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "AI Image Detector",
+  "version": "0.1.0",
+  "description": "Client-side AI image detection for web browsing using ONNX Runtime Web in an Offscreen Document.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/scanner.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

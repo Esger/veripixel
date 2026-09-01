@@ -1,0 +1,28 @@
+{
+  "name": "ai-image-detector",
+  "version": "0.1.0",
+  "description": "Chrome Extension (Manifest V3) for client-side AI image detection using ONNX Runtime Web and Offscreen Documents",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "exifr": "^7.1.3",
+    "lucide-react": "^0.475.0",
+    "onnxruntime-web": "^1.21.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.307",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vite-plugin-static-copy": "^2.2.0"
+  }
+}
