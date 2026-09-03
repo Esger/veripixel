@@ -1,6 +1,6 @@
 import {
-  injectImageBadge,
   injectLoadingBadge,
+  injectImageBadge,
   removeBadge,
   updateBadgePosition,
   checkPageModalState,
@@ -63,19 +63,31 @@ function isValidTargetElement(el: HTMLElement): boolean {
     return false;
   }
 
-  let width = 0;
-  let height = 0;
-  if (el instanceof HTMLImageElement) {
-    width = el.naturalWidth || el.width || el.offsetWidth || 0;
-    height = el.naturalHeight || el.height || el.offsetHeight || 0;
-  } else {
-    const rect = el.getBoundingClientRect();
-    width = el.offsetWidth || rect.width || 0;
-    height = el.offsetHeight || rect.height || 0;
+  // If image element is not loaded yet, allow it to pass so load event listener can handle it
+  if (el instanceof HTMLImageElement && !el.complete) {
+    return true;
   }
 
-  if (width < MIN_IMAGE_SIZE || height < MIN_IMAGE_SIZE) {
+  // 1. Check rendered on-screen dimensions
+  const rect = el.getBoundingClientRect();
+  const renderedWidth = rect.width || el.offsetWidth || 0;
+  const renderedHeight = rect.height || el.offsetHeight || 0;
+
+  // Rendered size on screen must be at least MIN_IMAGE_SIZE (224px).
+  // This strictly eliminates small avatars, profile thumbnails, icons, and buttons!
+  if (renderedWidth < MIN_IMAGE_SIZE || renderedHeight < MIN_IMAGE_SIZE) {
     return false;
+  }
+
+  // 2. Check natural intrinsic dimensions (if image element)
+  if (el instanceof HTMLImageElement) {
+    const naturalWidth = el.naturalWidth || 0;
+    const naturalHeight = el.naturalHeight || 0;
+    if (naturalWidth > 0 && naturalHeight > 0) {
+      if (naturalWidth < MIN_IMAGE_SIZE || naturalHeight < MIN_IMAGE_SIZE) {
+        return false;
+      }
+    }
   }
 
   return true;
@@ -101,6 +113,9 @@ function processElement(el: HTMLElement): void {
   }
 
   if (!isValidTargetElement(el)) {
+    if (el.dataset.aiDetectorProcessed) {
+      removeBadge(el);
+    }
     return;
   }
 
@@ -177,16 +192,27 @@ const resizeObserver = new ResizeObserver((entries) => {
         processElement(target);
       }
     } else {
-      updateBadgePosition(target);
+      if (!isValidTargetElement(target)) {
+        removeBadge(target);
+      } else {
+        updateBadgePosition(target);
+      }
     }
   }
 });
 
 function observeElement(el: HTMLElement, immediateCheck = false): void {
+  if (!isValidTargetElement(el)) {
+    if (el.dataset.aiDetectorProcessed) {
+      removeBadge(el);
+    }
+    return;
+  }
+
   observer.observe(el);
   resizeObserver.observe(el);
 
-  if (immediateCheck && !el.dataset.aiDetectorProcessed && isValidTargetElement(el)) {
+  if (immediateCheck && !el.dataset.aiDetectorProcessed) {
     processElement(el);
   }
 }
@@ -198,10 +224,15 @@ function scanDOM(): void {
   elements.forEach((el) => {
     const bg = el instanceof HTMLImageElement ? '' : window.getComputedStyle(el).backgroundImage;
     if (el instanceof HTMLImageElement || (bg && bg !== 'none')) {
+      if (!isValidTargetElement(el)) {
+        if (el.dataset.aiDetectorProcessed) {
+          removeBadge(el);
+        }
+        return;
+      }
+
       const rect = el.getBoundingClientRect();
       const isVisibleInViewport =
-        rect.width >= MIN_IMAGE_SIZE &&
-        rect.height >= MIN_IMAGE_SIZE &&
         rect.top < window.innerHeight &&
         rect.bottom > 0 &&
         rect.left < window.innerWidth &&
@@ -233,12 +264,16 @@ const mutationObserver = new MutationObserver((mutations) => {
         if (node instanceof HTMLElement) {
           const bg = node instanceof HTMLImageElement ? '' : window.getComputedStyle(node).backgroundImage;
           if (node instanceof HTMLImageElement || (bg && bg !== 'none')) {
-            observeElement(node, true);
+            if (isValidTargetElement(node)) {
+              observeElement(node, true);
+            }
           }
           node.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span').forEach((child) => {
             const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
             if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
-              observeElement(child, true);
+              if (isValidTargetElement(child)) {
+                observeElement(child, true);
+              }
             }
           });
         }
@@ -258,13 +293,21 @@ const mutationObserver = new MutationObserver((mutations) => {
         const isTargetImage = target instanceof HTMLImageElement || window.getComputedStyle(target).backgroundImage !== 'none';
         if (isTargetImage) {
           delete target.dataset.aiDetectorProcessed;
-          observeElement(target, true);
+          if (isValidTargetElement(target)) {
+            observeElement(target, true);
+          } else {
+            removeBadge(target);
+          }
         }
         // Deep scan when modal containers change class/style/open
         target.querySelectorAll<HTMLElement>('img, [style*="background"]').forEach((child) => {
           const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
           if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
-            observeElement(child, true);
+            if (isValidTargetElement(child)) {
+              observeElement(child, true);
+            } else {
+              removeBadge(child);
+            }
           }
         });
       }
@@ -342,4 +385,3 @@ document.addEventListener('visibilitychange', () => {
     scanDOM();
   }
 });
-
