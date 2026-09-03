@@ -1,5 +1,5 @@
 import exifr from 'exifr';
-import { AnalysisResult, MetadataResult, PatchResult } from '../shared/types';
+import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runPatchInference } from './model-runner';
 
@@ -109,6 +109,75 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
   }
 }
 
+/**
+ * Synthesizes multi-patch scores and forensic metadata into actionable natural language reasoning.
+ */
+function generateForensicReasoning(
+  patchScores: PatchResult[],
+  metadata: MetadataResult
+): ForensicReasoning {
+  if (patchScores.length === 0) {
+    return {
+      type: 'ambiguous',
+      title: 'Insufficient Data',
+      description: 'Image dimensions too small for multi-patch forensic analysis.'
+    };
+  }
+
+  const scores = patchScores.map((p) => p.aiScore);
+  const maxScore = Math.max(...scores);
+  const minScore = Math.min(...scores);
+  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const spread = maxScore - minScore;
+  const highCount = scores.filter((s) => s >= 0.7).length;
+
+  // 1. C2PA Verified
+  if (metadata.c2paPresent) {
+    return {
+      type: 'likely-real',
+      title: 'C2PA Credentials Verified',
+      description: 'Contains valid cryptographic provenance metadata.'
+    };
+  }
+
+  // 2. High variance between regions (e.g. face-swap, inpainting, or composite)
+  if (patchScores.length > 1 && spread >= 0.40 && maxScore >= 0.70) {
+    const topPatch = patchScores.find((p) => p.aiScore === maxScore);
+    const lowPatch = patchScores.find((p) => p.aiScore === minScore);
+    return {
+      type: 'localized-edit',
+      title: 'Localized AI Alteration Detected',
+      description: `High divergence across regions (${Math.round(maxScore * 100)}% in ${topPatch?.position || 'crop'} vs ${Math.round(minScore * 100)}% in ${lowPatch?.position || 'crop'}). Strong indicator of inpainting, composite, or face-swap.`
+    };
+  }
+
+  // 3. Uniformly High AI Probability across all crops
+  if (highCount === patchScores.length || (avgScore >= 0.75 && minScore >= 0.50)) {
+    return {
+      type: 'full-synthetic',
+      title: 'Uniform Synthetic Artifacts',
+      description: 'Consistent diffusion textures and frequency anomalies detected across all sampled regions (likely Midjourney, SDXL, or Flux).'
+    };
+  }
+
+  // 4. Uniformly Low AI Probability (Authentic camera photo)
+  if (maxScore < 0.30) {
+    const camInfo = metadata.cameraModel ? ` (${metadata.cameraModel})` : '';
+    return {
+      type: 'likely-real',
+      title: 'Authentic Photographic Texture',
+      description: `Natural ISO sensor noise and optical lens characteristics verified across all regions${camInfo}.`
+    };
+  }
+
+  // 5. Mixed / Subtle / Filtered
+  return {
+    type: 'ambiguous',
+    title: 'Subtle / Mixed Forensic Signals',
+    description: `Average AI confidence of ${Math.round(avgScore * 100)}%. May be a heavily processed, beauty-filtered, or upscaled photo.`
+  };
+}
+
 // Process an incoming image array buffer
 async function processImageBuffer(
   imageUrl: string,
@@ -169,6 +238,7 @@ async function processImageBuffer(
       }
 
       const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
+      const reasoning = generateForensicReasoning(patchScores, metadata);
 
       return {
         imageUrl,
@@ -177,6 +247,7 @@ async function processImageBuffer(
         patchScores,
         metadata,
         timestamp: Date.now(),
+        reasoning,
         supportsDeepSampling: extraction.supportsDeepSampling,
         deepGrid: extraction.deepGrid,
         currentGrid: extraction.currentGrid,

@@ -39,6 +39,12 @@ export interface GridDimensions {
   total: number;
 }
 
+export interface ForensicReasoning {
+  type: 'full-synthetic' | 'localized-edit' | 'likely-real' | 'ambiguous';
+  title: string;
+  description: string;
+}
+
 export interface AnalysisResult {
   imageUrl: string;
   status: ImageAnalysisStatus;
@@ -46,6 +52,7 @@ export interface AnalysisResult {
   patchScores: PatchResult[];
   metadata: MetadataResult;
   timestamp: number;
+  reasoning?: ForensicReasoning;
   supportsDeepSampling?: boolean;
   deepGrid?: GridDimensions;
   currentGrid?: GridDimensions;
@@ -62,6 +69,7 @@ export interface ImageSummary {
   timestamp: number;
   cameraModel?: string;
   c2paPresent?: boolean;
+  reasoningTitle?: string;
 }
 
 export interface TabScanStats {

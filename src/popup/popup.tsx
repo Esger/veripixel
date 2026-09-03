@@ -291,8 +291,8 @@ const Popup: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: '10px', color: '#64748B', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {img.imageUrl}
+                    <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {img.reasoningTitle || img.imageUrl}
                     </div>
                   </div>
                   <span style={{ fontSize: '11px', color: '#64748B' }}>📍</span>

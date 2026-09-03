@@ -89,7 +89,7 @@ function ensureGlobalStyles(): void {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 12px;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      width: 250px;
+      width: 260px;
       z-index: 2147483647;
     }
 
@@ -152,6 +152,57 @@ function ensureGlobalStyles(): void {
     .detectorTooltip__patchItem:hover {
       background: #334155;
       transform: translateY(-1px);
+    }
+
+    /* Forensic Reasoning Assessment Card */
+    .detectorTooltip__assessment {
+      margin-top: 8px;
+      padding: 7px 9px;
+      border-radius: 6px;
+      background: rgba(30, 41, 59, 0.75);
+      border-left: 3px solid #64748B;
+      box-sizing: border-box;
+    }
+
+    .detectorTooltip__assessment--localized {
+      border-left-color: #A855F7;
+      background: rgba(168, 85, 247, 0.12);
+    }
+
+    .detectorTooltip__assessment--synthetic {
+      border-left-color: #EF4444;
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    .detectorTooltip__assessment--real {
+      border-left-color: #10B981;
+      background: rgba(16, 185, 129, 0.12);
+    }
+
+    .detectorTooltip__assessment--ambiguous {
+      border-left-color: #F59E0B;
+      background: rgba(245, 158, 11, 0.12);
+    }
+
+    .detectorTooltip__assessmentHeader {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 700;
+      color: #F8FAFC;
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+
+    .detectorTooltip__assessmentIcon {
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .detectorTooltip__assessmentDesc {
+      color: #CBD5E1;
+      font-size: 10px;
+      line-height: 1.35;
     }
 
     .detectorTooltip__sampleToggleBtn {
@@ -636,6 +687,24 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     `;
   }
 
+  let assessmentHtml = '';
+  if (result.reasoning) {
+    let icon = '🔍';
+    if (result.reasoning.type === 'localized-edit') icon = '🎭';
+    else if (result.reasoning.type === 'full-synthetic') icon = '🤖';
+    else if (result.reasoning.type === 'likely-real') icon = '📸';
+
+    assessmentHtml = `
+      <div class="detectorTooltip__assessment detectorTooltip__assessment--${result.reasoning.type}">
+        <div class="detectorTooltip__assessmentHeader">
+          <span class="detectorTooltip__assessmentIcon">${icon}</span>
+          <span>${result.reasoning.title}</span>
+        </div>
+        <div class="detectorTooltip__assessmentDesc">${result.reasoning.description}</div>
+      </div>
+    `;
+  }
+
   tooltipEl.innerHTML = `
     <div class="detectorTooltip__header" style="color: ${color}">
       <span>${statusText}</span>
@@ -656,6 +725,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     <div class="${gridClass}">
       ${patchesHtml}
     </div>
+    ${assessmentHtml}
     ${switchButtonHtml}
   `;
 

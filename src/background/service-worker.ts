@@ -328,7 +328,8 @@ function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void
     status: result.status,
     timestamp: result.timestamp,
     cameraModel: result.metadata.cameraModel,
-    c2paPresent: result.metadata.c2paPresent
+    c2paPresent: result.metadata.c2paPresent,
+    reasoningTitle: result.reasoning?.title
   };
 
   const existingIdx = stats.images.findIndex((img) => img.imageUrl === result.imageUrl);
