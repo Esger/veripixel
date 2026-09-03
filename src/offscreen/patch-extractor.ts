@@ -18,7 +18,8 @@ export interface ExtractionResult {
 }
 
 /**
- * Calculates start and end offsets for 2 crops along an axis with STRICTLY ZERO overlap.
+ * Calculates start and end offsets for 2 crops along an axis matching the photographic Rule of Thirds.
+ * Centers the crops in the outer thirds (midpoints at 1/6 and 5/6) while guaranteeing zero overlap.
  */
 function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: number): { start: number; end: number } {
   const maxSlack = totalLength - 2 * targetSize;
@@ -26,36 +27,56 @@ function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: numb
     return { start: 0, end: Math.max(0, totalLength - targetSize) };
   }
 
-  if (totalLength >= 3 * targetSize) {
-    const half = targetSize / 2;
-    const start = Math.max(0, Math.round(totalLength * (1 / 3) - half));
-    const end = Math.min(totalLength - targetSize, Math.round(totalLength * (2 / 3) - half));
-    return {
-      start,
-      end: Math.max(start + targetSize, end)
-    };
-  }
+  const half = targetSize / 2;
+  // Ideal centers of the outer thirds (1/6 = 16.7% and 5/6 = 83.3%)
+  const idealStart = Math.round(totalLength * (1 / 6) - half);
+  const idealEnd = Math.round(totalLength * (5 / 6) - half);
 
-  const margin = Math.floor(maxSlack / 3);
-  const start = margin;
-  const end = totalLength - targetSize - margin;
+  let start = Math.max(0, idealStart);
+  let end = Math.min(totalLength - targetSize, idealEnd);
+
+  // If slack is small and ideal positions would overlap or leave no central gap,
+  // distribute slack evenly between left, center, and right.
+  if (end < start + targetSize) {
+    const margin = Math.floor(maxSlack / 3);
+    start = margin;
+    end = totalLength - targetSize - margin;
+  }
 
   return { start, end };
 }
 
 /**
- * Calculates start, mid, and end offsets for 3 non-overlapping crops along an axis.
- * Requires totalLength >= 3 * targetSize.
+ * Calculates start, mid, and end offsets for 3 non-overlapping crops along an axis (1/6, 1/2, 5/6).
  */
 function calculateThreeNonOverlappingOffsets(
   totalLength: number,
   targetSize: number
 ): { start: number; mid: number; end: number } {
   const maxSlack = totalLength - 3 * targetSize;
-  const outerMargin = Math.floor(maxSlack / 4);
-  const start = outerMargin;
-  const mid = Math.round((totalLength - targetSize) / 2);
-  const end = totalLength - targetSize - outerMargin;
+  if (maxSlack <= 0) {
+    return {
+      start: 0,
+      mid: Math.round((totalLength - targetSize) / 2),
+      end: Math.max(0, totalLength - targetSize)
+    };
+  }
+
+  const half = targetSize / 2;
+  let start = Math.round(totalLength * (1 / 6) - half);
+  let mid = Math.round(totalLength * (1 / 2) - half);
+  let end = Math.round(totalLength * (5 / 6) - half);
+
+  start = Math.max(0, start);
+  end = Math.min(totalLength - targetSize, end);
+
+  // If spacing between any two adjacent crops is too tight or overlaps, distribute slack evenly
+  if (mid < start + targetSize || end < mid + targetSize) {
+    const margin = Math.floor(maxSlack / 4);
+    start = margin;
+    mid = Math.round((totalLength - targetSize) / 2);
+    end = totalLength - targetSize - margin;
+  }
 
   return { start, mid, end };
 }
