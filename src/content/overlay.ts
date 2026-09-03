@@ -544,8 +544,10 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
       tooltipEl.hidePopover();
       if (currentEntry) hideRegionsForEntry(currentEntry);
     } else if (typeof tooltipEl.showPopover === 'function') {
-      tooltipEl.showPopover();
+      // Open region markers first so they enter the top layer underneath
       if (currentEntry) showRegionsForEntry(currentEntry);
+      // Open tooltip popover second so it appears on top of the region markers
+      tooltipEl.showPopover();
     }
   });
 
@@ -769,10 +771,15 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
               return;
             }
             if (response.result.status === 'complete') {
+              const wasTooltipOpen = tooltipEl.matches && tooltipEl.matches(':popover-open');
               injectImageBadge(targetEl, response.result);
-              if (tooltipEl.matches(':popover-open')) {
+              if (wasTooltipOpen) {
                 const currentEntry = badgeRegistry.get(targetEl);
                 if (currentEntry) showRegionsForEntry(currentEntry);
+                try {
+                  tooltipEl.hidePopover();
+                  tooltipEl.showPopover();
+                } catch (e) {}
               }
             }
           }
