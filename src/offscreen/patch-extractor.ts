@@ -60,6 +60,11 @@ export async function extractRuleOfThirdsPatches(
   const { width, height } = imageBitmap;
   const patches: ExtractedPatch[] = [];
 
+  // Skip images smaller than targetSize (224x224) - upscaling introduces distortion and unrealistic scores
+  if (width < targetSize || height < targetSize) {
+    return [];
+  }
+
   // For small/medium images (< 448px in either dimension), 2 full crops cannot fit without
   // overlapping. We use 1 center crop to strictly prevent overlap and loss of information.
   if (width < targetSize * 2 || height < targetSize * 2) {
@@ -67,24 +72,18 @@ export async function extractRuleOfThirdsPatches(
     canvas.width = targetSize;
     canvas.height = targetSize;
     const ctx = canvas.getContext('2d');
-    let box: PatchBox = { x: 0, y: 0, width: 1, height: 1 };
+    const sx = Math.round((width - targetSize) / 2);
+    const sy = Math.round((height - targetSize) / 2);
 
     if (ctx) {
-      if (width < targetSize || height < targetSize) {
-        ctx.drawImage(imageBitmap, 0, 0, width, height, 0, 0, targetSize, targetSize);
-        box = { x: 0, y: 0, width: 1, height: 1 };
-      } else {
-        const sx = Math.round((width - targetSize) / 2);
-        const sy = Math.round((height - targetSize) / 2);
-        ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
-        box = {
-          x: sx / width,
-          y: sy / height,
-          width: targetSize / width,
-          height: targetSize / height
-        };
-      }
+      ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
     }
+    const box: PatchBox = {
+      x: sx / width,
+      y: sy / height,
+      width: targetSize / width,
+      height: targetSize / height
+    };
     patches.push({ position: 'center', patchIndex: 0, canvas, box });
     return patches;
   }

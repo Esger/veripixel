@@ -131,11 +131,12 @@ async function processImageBuffer(
       if (patches.length === 0) {
         return {
           imageUrl,
-          status: 'complete',
-          aiScore: 0.05,
+          status: 'error',
+          aiScore: 0,
           patchScores: [],
           metadata,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          error: 'Image too small (<224x224)'
         };
       }
 
