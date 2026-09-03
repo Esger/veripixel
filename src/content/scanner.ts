@@ -217,6 +217,15 @@ const mutationObserver = new MutationObserver((mutations) => {
           });
         }
       });
+
+      mutation.removedNodes.forEach((node) => {
+        if (node instanceof HTMLElement) {
+          removeBadge(node);
+          node.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span').forEach((child) => {
+            removeBadge(child);
+          });
+        }
+      });
     } else if (mutation.type === 'attributes') {
       if (mutation.target instanceof HTMLElement) {
         const target = mutation.target;
@@ -251,6 +260,18 @@ document.addEventListener(
     if (!isExtensionContextValid()) return;
     setTimeout(() => scanDOM(), 150);
     setTimeout(() => scanDOM(), 400);
+  },
+  { passive: true }
+);
+
+// Scroll & visibility listener
+window.addEventListener(
+  'scroll',
+  () => {
+    if (!isExtensionContextValid()) return;
+    document.querySelectorAll<HTMLElement>('[data-ai-detector-badge-injected]').forEach((el) => {
+      updateBadgePosition(el);
+    });
   },
   { passive: true }
 );
