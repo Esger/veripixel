@@ -373,7 +373,7 @@ function isElementVisible(el: HTMLElement): boolean {
 
 /**
  * Calculates the exact rendered pixel geometry of the photo,
- * compensating for object-fit: contain letterbox/pillarbox padding.
+ * supporting object-fit: cover, object-fit: contain, and standard scaling.
  */
 function getDisplayedImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageHeight?: number) {
   const rect = targetEl.getBoundingClientRect();
@@ -381,52 +381,103 @@ function getDisplayedImageGeometry(targetEl: HTMLElement, imageWidth?: number, i
   const naturalH = (targetEl instanceof HTMLImageElement ? targetEl.naturalHeight : 0) || imageHeight || rect.height;
 
   if (naturalW <= 0 || naturalH <= 0 || rect.width <= 0 || rect.height <= 0) {
-    return { offsetX: 0, offsetY: 0, displayWidth: rect.width, displayHeight: rect.height, naturalW: rect.width, naturalH: rect.height };
+    return {
+      offsetX: 0,
+      offsetY: 0,
+      scale: 1,
+      naturalW: rect.width,
+      naturalH: rect.height,
+      clipWidth: rect.width,
+      clipHeight: rect.height
+    };
   }
 
   const computedStyle = window.getComputedStyle(targetEl);
   const objectFit = computedStyle.objectFit;
 
-  if (objectFit === 'contain') {
-    const elRatio = rect.width / rect.height;
-    const imgRatio = naturalW / naturalH;
+  const elW = rect.width;
+  const elH = rect.height;
+  const elRatio = elW / elH;
+  const imgRatio = naturalW / naturalH;
 
+  let scale = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (objectFit === 'cover') {
+    // cover: image fills the entire element container; overflow is clipped
     if (imgRatio > elRatio) {
-      // Letterboxed top and bottom
-      const displayW = rect.width;
-      const displayH = rect.width / imgRatio;
-      const offsetY = (rect.height - displayH) / 2;
-      return { offsetX: 0, offsetY, displayWidth: displayW, displayHeight: displayH, naturalW, naturalH };
+      // Image is wider than container: height matches container, width overflows horizontally
+      scale = elH / naturalH;
+      const displayW = naturalW * scale;
+      offsetX = (elW - displayW) / 2; // negative offset (centered horizontally)
+      offsetY = 0;
     } else {
-      // Pillarboxed left and right
-      const displayH = rect.height;
-      const displayW = rect.height * imgRatio;
-      const offsetX = (rect.width - displayW) / 2;
-      return { offsetX, offsetY: 0, displayWidth: displayW, displayHeight: displayH, naturalW, naturalH };
+      // Image is taller than container: width matches container, height overflows vertically
+      scale = elW / naturalW;
+      const displayH = naturalH * scale;
+      offsetX = 0;
+      offsetY = (elH - displayH) / 2; // negative offset (centered vertically)
     }
+  } else if (objectFit === 'contain') {
+    // contain: image fits entirely inside container; letterbox or pillarbox
+    if (imgRatio > elRatio) {
+      // Letterbox top and bottom
+      scale = elW / naturalW;
+      const displayH = naturalH * scale;
+      offsetX = 0;
+      offsetY = (elH - displayH) / 2;
+    } else {
+      // Pillarbox left and right
+      scale = elH / naturalH;
+      const displayW = naturalW * scale;
+      offsetX = (elW - displayW) / 2;
+      offsetY = 0;
+    }
+  } else {
+    // fill or default:
+    scale = elW / naturalW;
+    offsetX = 0;
+    offsetY = 0;
   }
 
-  return { offsetX: 0, offsetY: 0, displayWidth: rect.width, displayHeight: rect.height, naturalW, naturalH };
+  return {
+    offsetX,
+    offsetY,
+    scale,
+    naturalW,
+    naturalH,
+    clipWidth: elW,
+    clipHeight: elH
+  };
 }
 
 /**
- * Applies exact pixel coordinates to region elements, ensuring they are 100% square.
+ * Applies exact pixel coordinates to region elements, ensuring they are 100% square
+ * and clamped strictly within the visible image boundary.
  */
 function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
   if (!entry.patches || entry.regionEls.length === 0) return;
   const geo = getDisplayedImageGeometry(targetEl, entry.result?.imageWidth, entry.result?.imageHeight);
 
-  // Scale factor: real displayed screen pixels per natural image pixel
-  const scale = geo.displayWidth / geo.naturalW;
-  const squareSize = Math.max(20, Math.round(224 * scale));
+  // Exact scale of 224px sample on screen
+  const squareSize = Math.max(20, Math.round(224 * geo.scale));
 
   entry.regionEls.forEach((regionEl, idx) => {
     const patch = entry.patches?.[idx];
     if (!patch) return;
     const box = patch.box || { x: 0, y: 0, width: 1, height: 1 };
 
-    const pixelLeft = Math.round(geo.offsetX + box.x * geo.displayWidth);
-    const pixelTop = Math.round(geo.offsetY + box.y * geo.displayHeight);
+    // Compute pixel position relative to container
+    const sx = box.x * geo.naturalW;
+    const sy = box.y * geo.naturalH;
+
+    let pixelLeft = Math.round(geo.offsetX + sx * geo.scale);
+    let pixelTop = Math.round(geo.offsetY + sy * geo.scale);
+
+    // Clamp strictly within the visible target element boundary (never spill outside)
+    pixelLeft = Math.max(0, Math.min(Math.round(geo.clipWidth - squareSize), pixelLeft));
+    pixelTop = Math.max(0, Math.min(Math.round(geo.clipHeight - squareSize), pixelTop));
 
     regionEl.style.setProperty('--region-left', `${pixelLeft}px`);
     regionEl.style.setProperty('--region-top', `${pixelTop}px`);
