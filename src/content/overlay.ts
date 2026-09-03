@@ -6,6 +6,7 @@ interface BadgeEntry {
   anchorName: string;
   regionEls: HTMLElement[];
   patches?: PatchResult[];
+  result?: AnalysisResult;
 }
 
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
@@ -287,15 +288,16 @@ function ensureGlobalStyles(): void {
       cursor: wait;
     }
 
-    /* Native CSS Anchor Positioned Region Outlines */
+    /* Native CSS Anchor Positioned Region Outlines - Guaranteed 1:1 Square */
     .detectorRegion {
       position: fixed;
       position-anchor: var(--badge-anchor);
       inset: auto;
-      top: calc(anchor(top) + anchor-size(height) * var(--patch-y, 0));
-      left: calc(anchor(left) + anchor-size(width) * var(--patch-x, 0));
-      width: calc(anchor-size(width) * var(--patch-w, 1));
-      height: calc(anchor-size(height) * var(--patch-h, 1));
+      top: calc(anchor(top) + var(--region-top, 0px));
+      left: calc(anchor(left) + var(--region-left, 0px));
+      width: var(--region-size, 60px);
+      height: var(--region-size, 60px);
+      aspect-ratio: 1 / 1;
       position-visibility: anchors-visible;
       pointer-events: none;
       border-radius: 6px;
@@ -367,6 +369,69 @@ function isElementVisible(el: HTMLElement): boolean {
   }
   const rect = el.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * Calculates the exact rendered pixel geometry of the photo,
+ * compensating for object-fit: contain letterbox/pillarbox padding.
+ */
+function getDisplayedImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageHeight?: number) {
+  const rect = targetEl.getBoundingClientRect();
+  const naturalW = (targetEl instanceof HTMLImageElement ? targetEl.naturalWidth : 0) || imageWidth || rect.width;
+  const naturalH = (targetEl instanceof HTMLImageElement ? targetEl.naturalHeight : 0) || imageHeight || rect.height;
+
+  if (naturalW <= 0 || naturalH <= 0 || rect.width <= 0 || rect.height <= 0) {
+    return { offsetX: 0, offsetY: 0, displayWidth: rect.width, displayHeight: rect.height, naturalW: rect.width, naturalH: rect.height };
+  }
+
+  const computedStyle = window.getComputedStyle(targetEl);
+  const objectFit = computedStyle.objectFit;
+
+  if (objectFit === 'contain') {
+    const elRatio = rect.width / rect.height;
+    const imgRatio = naturalW / naturalH;
+
+    if (imgRatio > elRatio) {
+      // Letterboxed top and bottom
+      const displayW = rect.width;
+      const displayH = rect.width / imgRatio;
+      const offsetY = (rect.height - displayH) / 2;
+      return { offsetX: 0, offsetY, displayWidth: displayW, displayHeight: displayH, naturalW, naturalH };
+    } else {
+      // Pillarboxed left and right
+      const displayH = rect.height;
+      const displayW = rect.height * imgRatio;
+      const offsetX = (rect.width - displayW) / 2;
+      return { offsetX, offsetY: 0, displayWidth: displayW, displayHeight: displayH, naturalW, naturalH };
+    }
+  }
+
+  return { offsetX: 0, offsetY: 0, displayWidth: rect.width, displayHeight: rect.height, naturalW, naturalH };
+}
+
+/**
+ * Applies exact pixel coordinates to region elements, ensuring they are 100% square.
+ */
+function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
+  if (!entry.patches || entry.regionEls.length === 0) return;
+  const geo = getDisplayedImageGeometry(targetEl, entry.result?.imageWidth, entry.result?.imageHeight);
+
+  // Scale factor: real displayed screen pixels per natural image pixel
+  const scale = geo.displayWidth / geo.naturalW;
+  const squareSize = Math.max(20, Math.round(224 * scale));
+
+  entry.regionEls.forEach((regionEl, idx) => {
+    const patch = entry.patches?.[idx];
+    if (!patch) return;
+    const box = patch.box || { x: 0, y: 0, width: 1, height: 1 };
+
+    const pixelLeft = Math.round(geo.offsetX + box.x * geo.displayWidth);
+    const pixelTop = Math.round(geo.offsetY + box.y * geo.displayHeight);
+
+    regionEl.style.setProperty('--region-left', `${pixelLeft}px`);
+    regionEl.style.setProperty('--region-top', `${pixelTop}px`);
+    regionEl.style.setProperty('--region-size', `${squareSize}px`);
+  });
 }
 
 export function getActiveModalElements(): HTMLElement[] {
@@ -520,6 +585,9 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
       entry.badgeEl.showPopover();
     } catch (e) {}
   }
+
+  // Synchronize region box coordinates and dimensions to remain 100% square
+  applyRegionPositions(targetEl, entry);
 }
 
 export function injectLoadingBadge(targetEl: HTMLElement): void {
@@ -630,6 +698,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 
   const { badgeEl, tooltipEl } = entry;
   entry.patches = result.patchScores;
+  entry.result = result;
 
   if (!badgeEl.matches(':popover-open')) {
     try {
@@ -670,7 +739,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   entry.regionEls = [];
 
   result.patchScores.forEach((patch) => {
-    const box = patch.box || { x: 0, y: 0, width: 1, height: 1 };
     const patchScorePercent = Math.round(patch.aiScore * 100);
 
     let modifierClass = 'detectorRegion--lowAi';
@@ -688,10 +756,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     regionEl.setAttribute('popover', 'manual');
     regionEl.style.setProperty('--badge-anchor', entry.anchorName);
     regionEl.style.setProperty('position-anchor', entry.anchorName);
-    regionEl.style.setProperty('--patch-x', `${box.x}`);
-    regionEl.style.setProperty('--patch-y', `${box.y}`);
-    regionEl.style.setProperty('--patch-w', `${box.width}`);
-    regionEl.style.setProperty('--patch-h', `${box.height}`);
 
     const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
     regionEl.innerHTML = `<span class="detectorRegion__label" style="border-left: 3px solid ${regionColor}">${formattedPos} (${patchScorePercent}%)</span>`;
@@ -699,6 +763,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     document.body.appendChild(regionEl);
     entry.regionEls.push(regionEl);
   });
+
+  // Calculate and apply exact square dimensions on screen
+  applyRegionPositions(targetEl, entry);
 
   const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
   const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };

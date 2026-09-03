@@ -95,6 +95,13 @@ export type ExtensionMessage =
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
   | { type: 'CANCEL_BACKGROUND_ANALYSIS' }
   | {
+      type: 'PROCESS_IMAGE_URL';
+      imageUrl: string;
+      priority?: 'high' | 'normal';
+      isModal?: boolean;
+      sampleMode?: 'standard' | 'deep';
+    }
+  | {
       type: 'PROCESS_IMAGE_BUFFER';
       imageUrl: string;
       buffer: number[];

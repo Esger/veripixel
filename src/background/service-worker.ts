@@ -56,22 +56,6 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
   await creatingOffscreenPromise;
 }
 
-// Fetch cross-origin image bytes safely without CORS canvas taint issues
-async function fetchImageBuffer(url: string): Promise<{ buffer: number[]; contentType: string } | null> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-    const buffer = await response.arrayBuffer();
-    return {
-      buffer: Array.from(new Uint8Array(buffer)),
-      contentType
-    };
-  } catch (err) {
-    console.error(`[Background] Failed to fetch image ${url}:`, err);
-    return null;
-  }
-}
 
 // Per-tab scan statistics for toolbar badge and real-time popup updates
 const tabStatsMap = new Map<number, TabScanStats>();
@@ -170,35 +154,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
         await ensureOffscreenDocumentExists();
 
-        // Fetch CORS-safe buffer
-        const fetchedData = await fetchImageBuffer(imageUrl);
-        if (!fetchedData) {
-          const errorResult: AnalysisResult = {
-            imageUrl,
-            status: 'error',
-            aiScore: 0,
-            patchScores: [],
-            metadata: { exifPresent: false, c2paPresent: false, qualityScore: 0 },
-            timestamp: Date.now(),
-            error: 'Failed to fetch image data'
-          };
-          if (tabId !== undefined) {
-            const stats = getOrCreateTabStats(tabId);
-            stats.isScanning = false;
-            updateTabToolbarBadge(tabId, stats);
-            broadcastTabStatsUpdate(stats);
-          }
-          sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: errorResult });
-          return;
-        }
-
-        // Relay to Offscreen Document with priority and sampleMode
+        // Relay directly to Offscreen Document with priority and sampleMode (offscreen fetches directly as Blob)
         chrome.runtime.sendMessage(
           {
-            type: 'PROCESS_IMAGE_BUFFER',
+            type: 'PROCESS_IMAGE_URL',
             imageUrl,
-            buffer: fetchedData.buffer,
-            contentType: fetchedData.contentType,
             priority: priority || 'normal',
             isModal: isModal || false,
             sampleMode: requestedSampleMode

@@ -261,9 +261,109 @@ async function processImageBuffer(
   );
 }
 
+// Process an incoming image URL directly in offscreen without IPC serialization overhead
+async function processImageUrl(
+  imageUrl: string,
+  priority: 'high' | 'normal' = 'normal',
+  isModal = false,
+  sampleMode: 'standard' | 'deep' = 'standard'
+): Promise<AnalysisResult | null> {
+  return queue.run(
+    async () => {
+      const response = await fetch(imageUrl);
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+      const blob = await response.blob();
+
+      // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
+      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+
+      // 2. Extract EXIF / Metadata
+      const metadata = await extractMetadata(blob);
+
+      if (extraction.patches.length === 0) {
+        return {
+          imageUrl,
+          status: 'error',
+          aiScore: 0,
+          patchScores: [],
+          metadata,
+          timestamp: Date.now(),
+          supportsDeepSampling: false,
+          deepGrid: extraction.deepGrid,
+          currentGrid: extraction.currentGrid,
+          sampleMode,
+          imageWidth: extraction.width,
+          imageHeight: extraction.height,
+          error: 'Image too small (<224x224)'
+        };
+      }
+
+      // 3. Compute patch scores via ONNX Runtime Web
+      const patchScores: PatchResult[] = [];
+      for (const patch of extraction.patches) {
+        const aiScore = await runPatchInference(patch.canvas);
+        patchScores.push({
+          patchIndex: patch.patchIndex,
+          position: patch.position,
+          aiScore,
+          box: patch.box
+        });
+      }
+
+      // Aggregate overall score
+      const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
+      const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
+
+      let baseScore = maxPatchScore * 0.6 + avgPatchScore * 0.4;
+      if (metadata.c2paPresent) {
+        baseScore = Math.max(0.01, baseScore - 0.3);
+      }
+
+      const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
+      const reasoning = generateForensicReasoning(patchScores, metadata);
+
+      return {
+        imageUrl,
+        status: 'complete',
+        aiScore: aggregatedScore,
+        patchScores,
+        metadata,
+        timestamp: Date.now(),
+        reasoning,
+        supportsDeepSampling: extraction.supportsDeepSampling,
+        deepGrid: extraction.deepGrid,
+        currentGrid: extraction.currentGrid,
+        sampleMode: extraction.sampleMode,
+        imageWidth: extraction.width,
+        imageHeight: extraction.height
+      };
+    },
+    priority,
+    isModal
+  );
+}
+
 // Listen for background service worker requests
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'PROCESS_IMAGE_BUFFER') {
+  if (message.type === 'PROCESS_IMAGE_URL') {
+    processImageUrl(
+      message.imageUrl,
+      message.priority || 'normal',
+      message.isModal || false,
+      message.sampleMode || 'standard'
+    )
+      .then((result) => {
+        if (result) {
+          sendResponse({ result });
+        } else {
+          sendResponse({ cancelled: true });
+        }
+      })
+      .catch((err) => {
+        sendResponse({ error: String(err?.message || err) });
+      });
+    return true; // async response
+  } else if (message.type === 'PROCESS_IMAGE_BUFFER') {
     processImageBuffer(
       message.imageUrl,
       message.buffer,
