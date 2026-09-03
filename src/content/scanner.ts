@@ -1,4 +1,4 @@
-import { injectImageBadge, injectLoadingBadge, removeBadge } from './overlay';
+import { injectImageBadge, injectLoadingBadge, removeBadge, updateBadgePosition } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
 console.log('[ContentScript] AI Image Detector scanner initialized.');
@@ -13,9 +13,18 @@ function isExtensionContextValid(): boolean {
   }
 }
 
+function resolveUrl(url: string): string {
+  try {
+    return new URL(url, window.location.href).href;
+  } catch (e) {
+    return url;
+  }
+}
+
 function getElementImageUrl(el: HTMLElement): string | null {
   if (el instanceof HTMLImageElement) {
-    return el.currentSrc || el.src || null;
+    const raw = el.currentSrc || el.src || null;
+    return raw ? resolveUrl(raw) : null;
   }
 
   const style = window.getComputedStyle(el);
@@ -23,7 +32,7 @@ function getElementImageUrl(el: HTMLElement): string | null {
   if (bgImage && bgImage !== 'none' && bgImage.startsWith('url(')) {
     const match = bgImage.match(/^url\((['"]?)(.*?)\1\)/);
     if (match && match[2]) {
-      return match[2];
+      return resolveUrl(match[2]);
     }
   }
   return null;
@@ -49,8 +58,8 @@ function isValidTargetElement(el: HTMLElement): boolean {
   let width = 0;
   let height = 0;
   if (el instanceof HTMLImageElement) {
-    width = el.naturalWidth || el.width || 0;
-    height = el.naturalHeight || el.height || 0;
+    width = el.naturalWidth || el.width || el.offsetWidth || 0;
+    height = el.naturalHeight || el.height || el.offsetHeight || 0;
   } else {
     const rect = el.getBoundingClientRect();
     width = el.offsetWidth || rect.width || 0;
@@ -141,15 +150,46 @@ const observer = new IntersectionObserver(
   }
 );
 
+// Resize Observer to pick up modal/responsive images as soon as they layout & resize
+const resizeObserver = new ResizeObserver((entries) => {
+  if (!isExtensionContextValid()) return;
+  for (const entry of entries) {
+    const target = entry.target as HTMLElement;
+    if (!target.dataset.aiDetectorProcessed) {
+      if (isValidTargetElement(target)) {
+        processElement(target);
+      }
+    } else {
+      updateBadgePosition(target);
+    }
+  }
+});
+
+function observeElement(el: HTMLElement, immediateCheck = false): void {
+  observer.observe(el);
+  resizeObserver.observe(el);
+
+  if (immediateCheck && !el.dataset.aiDetectorProcessed && isValidTargetElement(el)) {
+    processElement(el);
+  }
+}
+
 function scanDOM(): void {
   if (!isExtensionContextValid()) return;
 
-  // Query <img> tags as well as elements commonly used for CSS background-images
   const elements = document.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span');
   elements.forEach((el) => {
     const bg = el instanceof HTMLImageElement ? '' : window.getComputedStyle(el).backgroundImage;
     if (el instanceof HTMLImageElement || (bg && bg !== 'none')) {
-      observer.observe(el);
+      const rect = el.getBoundingClientRect();
+      const isVisibleInViewport =
+        rect.width >= MIN_IMAGE_SIZE &&
+        rect.height >= MIN_IMAGE_SIZE &&
+        rect.top < window.innerHeight &&
+        rect.bottom > 0 &&
+        rect.left < window.innerWidth &&
+        rect.right > 0;
+      observeElement(el, isVisibleInViewport);
     }
   });
 }
@@ -157,7 +197,7 @@ function scanDOM(): void {
 // Initial DOM Scan
 scanDOM();
 
-// MutationObserver for dynamically added nodes AND src/srcset/style attribute changes
+// MutationObserver for dynamically added nodes AND src/srcset/style/class attribute changes (modals)
 const mutationObserver = new MutationObserver((mutations) => {
   if (!isExtensionContextValid()) return;
 
@@ -165,21 +205,33 @@ const mutationObserver = new MutationObserver((mutations) => {
     if (mutation.type === 'childList') {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof HTMLElement) {
-          if (node instanceof HTMLImageElement || window.getComputedStyle(node).backgroundImage !== 'none') {
-            observer.observe(node);
+          const bg = node instanceof HTMLImageElement ? '' : window.getComputedStyle(node).backgroundImage;
+          if (node instanceof HTMLImageElement || (bg && bg !== 'none')) {
+            observeElement(node, true);
           }
           node.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span').forEach((child) => {
-            const bg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
-            if (child instanceof HTMLImageElement || (bg && bg !== 'none')) {
-              observer.observe(child);
+            const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
+            if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
+              observeElement(child, true);
             }
           });
         }
       });
     } else if (mutation.type === 'attributes') {
       if (mutation.target instanceof HTMLElement) {
-        delete mutation.target.dataset.aiDetectorProcessed;
-        observer.observe(mutation.target);
+        const target = mutation.target;
+        const isTargetImage = target instanceof HTMLImageElement || window.getComputedStyle(target).backgroundImage !== 'none';
+        if (isTargetImage) {
+          delete target.dataset.aiDetectorProcessed;
+          observeElement(target, true);
+        }
+        // Deep scan when modal containers change class/style/open
+        target.querySelectorAll<HTMLElement>('img, [style*="background"]').forEach((child) => {
+          const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
+          if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
+            observeElement(child, true);
+          }
+        });
       }
     }
   }
@@ -189,8 +241,19 @@ mutationObserver.observe(document.body, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ['src', 'srcset', 'data-src', 'style', 'class']
+  attributeFilter: ['src', 'srcset', 'data-src', 'style', 'class', 'open']
 });
+
+// User click hook: modals and lightboxes are triggered on click
+document.addEventListener(
+  'click',
+  () => {
+    if (!isExtensionContextValid()) return;
+    setTimeout(() => scanDOM(), 150);
+    setTimeout(() => scanDOM(), 400);
+  },
+  { passive: true }
+);
 
 // Rescan DOM whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {

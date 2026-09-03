@@ -1,5 +1,28 @@
 import { AnalysisResult } from '../shared/types';
 
+export function updateBadgePosition(targetEl: HTMLElement): void {
+  const container = targetEl instanceof HTMLImageElement ? targetEl.parentElement : targetEl;
+  if (!container) return;
+
+  const host = container.querySelector(':scope > .ai-detector-badge-host') as HTMLElement | null;
+  if (!host) return;
+
+  let relativeBottom = 4;
+  let relativeRight = 4;
+
+  if (targetEl instanceof HTMLImageElement) {
+    const imgRect = targetEl.getBoundingClientRect();
+    const parentRect = container.getBoundingClientRect();
+    if (imgRect.width > 0 && imgRect.height > 0 && parentRect.width > 0 && parentRect.height > 0) {
+      relativeBottom = Math.max(0, parentRect.bottom - imgRect.bottom + 4);
+      relativeRight = Math.max(0, parentRect.right - imgRect.right + 4);
+    }
+  }
+
+  host.style.bottom = `${relativeBottom}px`;
+  host.style.right = `${relativeRight}px`;
+}
+
 export function injectLoadingBadge(targetEl: HTMLElement): void {
   if (targetEl.dataset.aiDetectorBadgeInjected) {
     return;
@@ -19,8 +42,10 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 
     const imgRect = targetEl.getBoundingClientRect();
     const parentRect = container.getBoundingClientRect();
-    relativeBottom = Math.max(0, parentRect.bottom - imgRect.bottom + 4);
-    relativeRight = Math.max(0, parentRect.right - imgRect.right + 4);
+    if (imgRect.width > 0 && imgRect.height > 0 && parentRect.width > 0 && parentRect.height > 0) {
+      relativeBottom = Math.max(0, parentRect.bottom - imgRect.bottom + 4);
+      relativeRight = Math.max(0, parentRect.right - imgRect.right + 4);
+    }
   } else {
     container = targetEl;
     const containerStyle = window.getComputedStyle(container);
@@ -36,6 +61,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   host.style.right = `${relativeRight}px`;
   host.style.top = 'auto';
   host.style.left = 'auto';
+  host.style.zIndex = '30';
 
   const shadow = host.attachShadow({ mode: 'open' });
 
@@ -222,6 +248,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 
   const host = container.querySelector('.ai-detector-badge-host');
   if (!host || !host.shadowRoot) return;
+
+  // Refresh position to ensure layout adjustments (e.g. modals) are accurately reflected
+  updateBadgePosition(targetEl);
 
   const scorePercent = Math.round(result.aiScore * 100);
   let color = '#10B981'; // Green (<30%)
