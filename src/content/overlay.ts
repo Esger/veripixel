@@ -24,8 +24,7 @@ function ensureGlobalStyles(): void {
     .detectorBadge {
       position: fixed;
       position-anchor: var(--badge-anchor);
-      top: auto;
-      left: auto;
+      inset: auto;
       bottom: calc(anchor(bottom) + 6px);
       right: calc(anchor(right) + 6px);
       position-visibility: anchors-visible;
@@ -46,7 +45,6 @@ function ensureGlobalStyles(): void {
       transition: transform 0.15s ease, border-color 0.3s ease;
       user-select: none;
       margin: 0;
-      inset: auto;
       z-index: 2147483640;
     }
 
@@ -74,8 +72,7 @@ function ensureGlobalStyles(): void {
     .detectorTooltip {
       position: fixed;
       position-anchor: var(--badge-anchor);
-      top: auto;
-      left: auto;
+      inset: auto;
       bottom: calc(anchor(bottom) + 36px);
       right: calc(anchor(right) + 6px);
       position-try-fallbacks: flip-block;
@@ -90,7 +87,6 @@ function ensureGlobalStyles(): void {
       font-size: 12px;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
       width: 220px;
-      inset: auto;
       z-index: 2147483647;
     }
 
@@ -141,17 +137,13 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
   if (!entry) return;
 
   const rect = targetEl.getBoundingClientRect();
-  const isVisible =
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.bottom > 0 &&
-    rect.top < window.innerHeight &&
-    rect.right > 0 &&
-    rect.left < window.innerWidth &&
-    window.getComputedStyle(targetEl).visibility !== 'hidden' &&
-    window.getComputedStyle(targetEl).display !== 'none';
+  const hasDimensions = rect.width > 0 && rect.height > 0;
+  const isDisplayNone =
+    window.getComputedStyle(targetEl).display === 'none' ||
+    window.getComputedStyle(targetEl).visibility === 'hidden';
 
-  if (!isVisible) {
+  // Only hide popovers if the element is explicitly hidden or has 0 dimensions
+  if (!hasDimensions || isDisplayNone) {
     if (entry.badgeEl.matches(':popover-open')) {
       try {
         entry.badgeEl.hidePopover();
@@ -165,6 +157,7 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
     return;
   }
 
+  // Ensure badge is ALWAYS open by default in top-layer
   if (!entry.badgeEl.matches(':popover-open')) {
     try {
       entry.badgeEl.showPopover();
@@ -209,18 +202,18 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   badgeEl.className = 'detectorBadge';
   badgeEl.setAttribute('popover', 'manual');
   badgeEl.style.setProperty('--badge-anchor', anchorName);
-  (badgeEl.style as any).positionAnchor = anchorName;
+  badgeEl.style.setProperty('position-anchor', anchorName);
   badgeEl.innerHTML = `
     <span class="detectorBadge__dot detectorBadge__dot--loading"></span>
     <span class="detectorBadge__scoreText">...</span>
   `;
 
-  // Create dropdown tooltip popover in native top layer
+  // Create dropdown tooltip popover in native top layer (closed by default)
   const tooltipEl = document.createElement('div');
   tooltipEl.className = 'detectorTooltip';
   tooltipEl.setAttribute('popover', 'manual');
   tooltipEl.style.setProperty('--badge-anchor', anchorName);
-  (tooltipEl.style as any).positionAnchor = anchorName;
+  tooltipEl.style.setProperty('position-anchor', anchorName);
   tooltipEl.innerHTML = `
     <div style="font-weight:600; color: #94A3B8;">Analyzing image with AI model...</div>
   `;
@@ -263,6 +256,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 
   badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName });
 
+  // Open badge popover immediately by default
   try {
     badgeEl.showPopover();
   } catch (e) {
@@ -287,6 +281,13 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   if (!entry) return;
 
   const { badgeEl, tooltipEl } = entry;
+
+  // Ensure badge popover is open by default
+  if (!badgeEl.matches(':popover-open')) {
+    try {
+      badgeEl.showPopover();
+    } catch (e) {}
+  }
 
   const scorePercent = Math.round(result.aiScore * 100);
   let color = '#10B981'; // Green (<30%)
