@@ -1,4 +1,10 @@
-import { injectImageBadge, injectLoadingBadge, removeBadge, updateBadgePosition } from './overlay';
+import {
+  injectImageBadge,
+  injectLoadingBadge,
+  removeBadge,
+  updateBadgePosition,
+  checkPageModalState
+} from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
 console.log('[ContentScript] AI Image Detector scanner initialized.');
@@ -196,6 +202,7 @@ function scanDOM(): void {
 
 // Initial DOM Scan
 scanDOM();
+checkPageModalState();
 
 // MutationObserver for dynamically added nodes AND src/srcset/style/class attribute changes (modals)
 const mutationObserver = new MutationObserver((mutations) => {
@@ -244,22 +251,66 @@ const mutationObserver = new MutationObserver((mutations) => {
       }
     }
   }
+
+  // Update modal state to hide/revert badges and dropdowns
+  checkPageModalState();
 });
 
 mutationObserver.observe(document.body, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ['src', 'srcset', 'data-src', 'style', 'class', 'open']
+  attributeFilter: ['src', 'srcset', 'data-src', 'style', 'class', 'open', 'hidden', 'aria-modal']
 });
+
+mutationObserver.observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ['class', 'style']
+});
+
+// Event listeners to instantly detect page popover and dialog openings/closures
+document.addEventListener(
+  'toggle',
+  (e) => {
+    const target = e.target as HTMLElement;
+    if (target && !target.classList.contains('detectorBadge') && !target.classList.contains('detectorTooltip')) {
+      checkPageModalState();
+    }
+  },
+  true
+);
+
+document.addEventListener(
+  'close',
+  () => {
+    checkPageModalState();
+  },
+  true
+);
+
+document.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.key === 'Escape') {
+      setTimeout(checkPageModalState, 50);
+    }
+  },
+  true
+);
 
 // User click hook: modals and lightboxes are triggered on click
 document.addEventListener(
   'click',
   () => {
     if (!isExtensionContextValid()) return;
-    setTimeout(() => scanDOM(), 150);
-    setTimeout(() => scanDOM(), 400);
+    setTimeout(() => {
+      checkPageModalState();
+      scanDOM();
+    }, 100);
+    setTimeout(() => {
+      checkPageModalState();
+      scanDOM();
+    }, 400);
   },
   { passive: true }
 );
@@ -280,6 +331,7 @@ window.addEventListener(
 document.addEventListener('visibilitychange', () => {
   if (!isExtensionContextValid()) return;
   if (document.visibilityState === 'visible') {
+    checkPageModalState();
     scanDOM();
   }
 });
