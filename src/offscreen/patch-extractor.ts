@@ -46,7 +46,8 @@ function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: numb
 }
 
 /**
- * Calculates start, mid, and end offsets for 3 non-overlapping crops along an axis.
+ * Calculates start, mid, and end offsets for 3 non-overlapping crops along an axis,
+ * matching the Flexbox `space-around` distribution (centers at 1/6, 1/2, and 5/6).
  */
 function calculateThreeNonOverlappingOffsets(
   totalLength: number,
@@ -61,7 +62,10 @@ function calculateThreeNonOverlappingOffsets(
     };
   }
 
-  const outerMargin = Math.floor(maxSlack / 4);
+  // Flexbox space-around equivalent:
+  // outerMargin is half of the inner gap (maxSlack / 6),
+  // placing item centers directly at 1/6, 1/2, and 5/6 of the axis.
+  const outerMargin = Math.round(maxSlack / 6);
   const start = outerMargin;
   const mid = Math.round((totalLength - targetSize) / 2);
   const end = totalLength - targetSize - outerMargin;
