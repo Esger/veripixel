@@ -138,15 +138,15 @@ function ensureGlobalStyles(): void {
       transform: translateY(-1px);
     }
 
-    /* Sampled Region Outlines */
+    /* Native CSS Anchor Positioned Region Outlines */
     .detectorRegion {
       position: fixed;
       position-anchor: var(--badge-anchor);
       inset: auto;
-      top: var(--fb-top, calc(anchor(top) + anchor-size(height) * var(--patch-y, 0)));
-      left: var(--fb-left, calc(anchor(left) + anchor-size(width) * var(--patch-x, 0)));
-      width: var(--fb-width, calc(anchor-size(width) * var(--patch-w, 1)));
-      height: var(--fb-height, calc(anchor-size(height) * var(--patch-h, 1)));
+      top: calc(anchor(top) + anchor-size(height) * var(--patch-y, 0));
+      left: calc(anchor(left) + anchor-size(width) * var(--patch-x, 0));
+      width: calc(anchor-size(width) * var(--patch-w, 1));
+      height: calc(anchor-size(height) * var(--patch-h, 1));
       position-visibility: anchors-visible;
       pointer-events: none;
       border-radius: 6px;
@@ -226,13 +226,19 @@ export function getActiveModalElements(): HTMLElement[] {
   // 1. Native <dialog open> (excluding our own elements)
   const openDialogs = document.querySelectorAll<HTMLDialogElement>('dialog[open]');
   for (const dialog of openDialogs) {
-    if (!dialog.classList.contains('detectorBadge') && !dialog.classList.contains('detectorTooltip') && !dialog.classList.contains('detectorRegion')) {
+    if (
+      !dialog.classList.contains('detectorBadge') &&
+      !dialog.classList.contains('detectorTooltip') &&
+      !dialog.classList.contains('detectorRegion')
+    ) {
       activeModals.push(dialog);
     }
   }
 
   // 2. Open popovers on page (excluding our own elements)
-  const popovers = document.querySelectorAll<HTMLElement>('[popover]:not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)');
+  const popovers = document.querySelectorAll<HTMLElement>(
+    '[popover]:not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)'
+  );
   for (const popover of popovers) {
     try {
       if (popover.matches(':popover-open')) {
@@ -252,8 +258,8 @@ export function getActiveModalElements(): HTMLElement[] {
   // 4. Fixed or absolute elements with class containing modal, dialog, or lightbox
   const modalCandidates = document.querySelectorAll<HTMLElement>(
     '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
-    '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
-    '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)'
+      '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
+      '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)'
   );
 
   for (const candidate of modalCandidates) {
@@ -280,8 +286,7 @@ export function isElementInsideActiveModal(el: HTMLElement, activeModals: HTMLEl
   return false;
 }
 
-function showRegionsForEntry(entry: BadgeEntry, targetEl: HTMLElement): void {
-  updateRegionPositions(targetEl, entry);
+function showRegionsForEntry(entry: BadgeEntry): void {
   entry.regionEls.forEach((regionEl) => {
     try {
       if (!regionEl.matches(':popover-open')) {
@@ -298,23 +303,6 @@ function hideRegionsForEntry(entry: BadgeEntry): void {
         regionEl.hidePopover();
       }
     } catch (e) {}
-  });
-}
-
-function updateRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
-  const rect = targetEl.getBoundingClientRect();
-  entry.regionEls.forEach((regionEl, idx) => {
-    const patch = entry.patches?.[idx];
-    const box = patch?.box || { x: 0, y: 0, width: 1, height: 1 };
-    regionEl.style.setProperty('--patch-x', `${box.x}`);
-    regionEl.style.setProperty('--patch-y', `${box.y}`);
-    regionEl.style.setProperty('--patch-w', `${box.width}`);
-    regionEl.style.setProperty('--patch-h', `${box.height}`);
-
-    regionEl.style.setProperty('--fb-top', `${rect.top + rect.height * box.y}px`);
-    regionEl.style.setProperty('--fb-left', `${rect.left + rect.width * box.x}px`);
-    regionEl.style.setProperty('--fb-width', `${rect.width * box.width}px`);
-    regionEl.style.setProperty('--fb-height', `${rect.height * box.height}px`);
   });
 }
 
@@ -433,21 +421,6 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
       entry.badgeEl.showPopover();
     } catch (e) {}
   }
-
-  // Update region positions if tooltip popover is currently active
-  if (entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open')) {
-    updateRegionPositions(targetEl, entry);
-  }
-
-  // JS coordinate fallback if browser does not yet support CSS Anchor Positioning
-  if (!('anchorName' in document.documentElement.style)) {
-    const fallbackBottom = Math.max(6, window.innerHeight - rect.bottom + 6);
-    const fallbackRight = Math.max(6, window.innerWidth - rect.right + 6);
-    entry.badgeEl.style.bottom = `${fallbackBottom}px`;
-    entry.badgeEl.style.right = `${fallbackRight}px`;
-    entry.tooltipEl.style.bottom = `${fallbackBottom + 32}px`;
-    entry.tooltipEl.style.right = `${fallbackRight}px`;
-  }
 }
 
 export function injectLoadingBadge(targetEl: HTMLElement): void {
@@ -516,7 +489,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
       if (currentEntry) hideRegionsForEntry(currentEntry);
     } else if (typeof tooltipEl.showPopover === 'function') {
       tooltipEl.showPopover();
-      if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
+      if (currentEntry) showRegionsForEntry(currentEntry);
     }
   });
 
@@ -609,7 +582,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     scoreText.textContent = `${scorePercent}%`;
   }
 
-  // Create region outline popover elements for each sampled patch
+  // Create native anchor-positioned region outline popovers
   hideRegionsForEntry(entry);
   entry.regionEls.forEach((el) => el.remove());
   entry.regionEls = [];

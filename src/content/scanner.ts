@@ -334,18 +334,6 @@ document.addEventListener(
   { passive: true }
 );
 
-// Scroll & visibility listener
-window.addEventListener(
-  'scroll',
-  () => {
-    if (!isExtensionContextValid()) return;
-    document.querySelectorAll<HTMLElement>('[data-ai-detector-badge-injected]').forEach((el) => {
-      updateBadgePosition(el);
-    });
-  },
-  { passive: true }
-);
-
 // Rescan DOM whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {
   if (!isExtensionContextValid()) return;
@@ -354,3 +342,4 @@ document.addEventListener('visibilitychange', () => {
     scanDOM();
   }
 });
+
