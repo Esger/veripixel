@@ -8,6 +8,39 @@ export interface ExtractedPatch {
 }
 
 /**
+ * Calculates start and end offsets for 2 crops along an axis.
+ * Uses rule-of-thirds centers (1/3 and 2/3). If the image is smaller or the
+ * thirds rule cannot be maintained without hitting outer bounds, shifts the
+ * crops toward each other toward the center to avoid leaving a dead zone in the middle.
+ */
+function calculateThirdsOffsets(totalLength: number, targetSize: number): { start: number; end: number } {
+  const maxOffset = Math.max(0, totalLength - targetSize);
+  const half = targetSize / 2;
+
+  // Ideal rule-of-thirds centers (1/3 and 2/3)
+  const center1 = totalLength / 3;
+  const center2 = (totalLength * 2) / 3;
+
+  let start = Math.round(center1 - half);
+  let end = Math.round(center2 - half);
+
+  // Clamp within image boundaries [0, maxOffset]
+  start = Math.max(0, Math.min(maxOffset, start));
+  end = Math.max(0, Math.min(maxOffset, end));
+
+  // If the image is small enough that crops hit the outer edges (start is 0 and end is maxOffset),
+  // shift them inward toward each other so they cover the central subject rather than sticking to outer corners
+  if (start === 0 && end === maxOffset) {
+    const center = Math.round(maxOffset / 2);
+    const inwardShift = Math.round(maxOffset * 0.25);
+    start = Math.min(center, start + inwardShift);
+    end = Math.max(center, end - inwardShift);
+  }
+
+  return { start, end };
+}
+
+/**
  * Extracts patches from image centered at 1/3 and 2/3 grid intersection points (rule of thirds)
  * or a single center crop for small/medium images. Returns normalized box coordinates for overlay highlights.
  */
@@ -25,8 +58,8 @@ export async function extractRuleOfThirdsPatches(
   const { width, height } = imageBitmap;
   const patches: ExtractedPatch[] = [];
 
-  // Fallback for small/medium images (< 2x targetSize = 448px): 1 single center crop/fit to save 75% WASM inference time
-  if (width < targetSize * 2 || height < targetSize * 2) {
+  // Fallback for small images (< targetSize = 224px): 1 single center crop/fit
+  if (width < targetSize || height < targetSize) {
     const canvas = document.createElement('canvas');
     canvas.width = targetSize;
     canvas.height = targetSize;
@@ -34,54 +67,15 @@ export async function extractRuleOfThirdsPatches(
     let box: PatchBox = { x: 0, y: 0, width: 1, height: 1 };
 
     if (ctx) {
-      if (width < targetSize || height < targetSize) {
-        ctx.drawImage(imageBitmap, 0, 0, width, height, 0, 0, targetSize, targetSize);
-        box = { x: 0, y: 0, width: 1, height: 1 };
-      } else {
-        const sx = Math.round((width - targetSize) / 2);
-        const sy = Math.round((height - targetSize) / 2);
-        ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
-        box = {
-          x: sx / width,
-          y: sy / height,
-          width: targetSize / width,
-          height: targetSize / height
-        };
-      }
+      ctx.drawImage(imageBitmap, 0, 0, width, height, 0, 0, targetSize, targetSize);
     }
     patches.push({ position: 'center', patchIndex: 0, canvas, box });
     return patches;
   }
 
-  // Calculate crop X positions
-  let sxLeft: number;
-  let sxRight: number;
-  if (width >= 3 * targetSize) {
-    const half = Math.floor(targetSize / 2);
-    sxLeft = Math.round(width * (1 / 3)) - half;
-    sxRight = Math.round(width * (2 / 3)) - half;
-  } else {
-    sxLeft = 0;
-    sxRight = width - targetSize;
-  }
-
-  // Calculate crop Y positions
-  let syTop: number;
-  let syBottom: number;
-  if (height >= 3 * targetSize) {
-    const half = Math.floor(targetSize / 2);
-    syTop = Math.round(height * (1 / 3)) - half;
-    syBottom = Math.round(height * (2 / 3)) - half;
-  } else {
-    syTop = 0;
-    syBottom = height - targetSize;
-  }
-
-  // Ensure coordinates remain clamped within valid image boundaries
-  sxLeft = Math.max(0, Math.min(width - targetSize, sxLeft));
-  sxRight = Math.max(0, Math.min(width - targetSize, sxRight));
-  syTop = Math.max(0, Math.min(height - targetSize, syTop));
-  syBottom = Math.max(0, Math.min(height - targetSize, syBottom));
+  // Calculate crop X and Y offsets using rule-of-thirds centers, shifting inward when needed
+  const { start: sxLeft, end: sxRight } = calculateThirdsOffsets(width, targetSize);
+  const { start: syTop, end: syBottom } = calculateThirdsOffsets(height, targetSize);
 
   const cropConfigs = [
     { name: 'top-left' as const, index: 0, sx: sxLeft, sy: syTop },
