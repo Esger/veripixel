@@ -20,10 +20,20 @@ export interface ExtractionResult {
 /**
  * Uses a real hidden browser Flexbox element with `justify-content: space-around`
  * to read layout offsets directly from the browser's layout engine without self-calculating.
+ * When crops cannot fit without overlapping (totalLength < count * targetSize), clamps them to
+ * the opposite ends to maximize corner/edge coverage.
  */
 function getFlexboxSpaceAroundOffsets(totalLength: number, targetSize: number, count: number): number[] {
   if (totalLength < targetSize || count <= 1) {
     return [Math.max(0, Math.round((totalLength - targetSize) / 2))];
+  }
+
+  // If crops cannot fit without overlapping, anchor them at the extreme ends
+  if (totalLength < count * targetSize) {
+    if (count === 2) {
+      return [0, totalLength - targetSize];
+    }
+    return [0, Math.round((totalLength - targetSize) / 2), totalLength - targetSize];
   }
 
   if (typeof document !== 'undefined') {
@@ -52,7 +62,7 @@ function getFlexboxSpaceAroundOffsets(totalLength: number, targetSize: number, c
 
     document.body.appendChild(flexContainer);
     const offsets = Array.from(flexContainer.children).map((child) =>
-      Math.round((child as HTMLElement).offsetLeft)
+      Math.max(0, Math.min(totalLength - targetSize, Math.round((child as HTMLElement).offsetLeft)))
     );
     flexContainer.remove();
     return offsets;
@@ -62,7 +72,9 @@ function getFlexboxSpaceAroundOffsets(totalLength: number, targetSize: number, c
   const maxSlack = Math.max(0, totalLength - count * targetSize);
   const outerMargin = Math.round(maxSlack / (count * 2));
   const innerGap = Math.round(maxSlack / count);
-  return Array.from({ length: count }, (_, i) => outerMargin + i * (targetSize + innerGap));
+  return Array.from({ length: count }, (_, i) =>
+    Math.max(0, Math.min(totalLength - targetSize, outerMargin + i * (targetSize + innerGap)))
+  );
 }
 
 /**
@@ -100,10 +112,12 @@ function getGridPositionName(col: number, row: number, totalCols: number, totalR
 }
 
 /**
- * Extracts patches from image centered on non-overlapping grid.
- * If only one of the sides is >= targetSize (224), the missing part on the smaller side
- * is filled with black letterbox/pillarbox padding to preserve aspect ratio without adding AI artifacts.
- * If BOTH sides are < targetSize (224), returns empty patches to skip small avatars.
+ * Extracts patches from image centered on grid.
+ * - In standard mode: extracts 4 corner samples (2x2) for all images >= targetSize (224px),
+ *   allowing overlap on smaller images to guarantee comprehensive corner inspection.
+ * - In deep mode: extracts up to 9 samples (3x3) if image dimensions permit.
+ * - If only one side is >= targetSize, letterboxes/pillarboxes the smaller side.
+ * - If BOTH sides are < targetSize (224), returns empty patches to skip small avatars.
  */
 export async function extractRuleOfThirdsPatches(
   blob: Blob,
@@ -126,9 +140,9 @@ export async function extractRuleOfThirdsPatches(
     return { patches: [], supportsDeepSampling: false, deepGrid: emptyGrid, currentGrid: emptyGrid, sampleMode, width, height };
   }
 
-  // Determine maximum non-overlapping crops along each axis
-  const maxCols = width >= targetSize * 3 ? 3 : width >= targetSize * 2 ? 2 : 1;
-  const maxRows = height >= targetSize * 3 ? 3 : height >= targetSize * 2 ? 2 : 1;
+  // Determine maximum crops along each axis
+  const maxCols = width >= targetSize * 3 ? 3 : width >= targetSize ? 2 : 1;
+  const maxRows = height >= targetSize * 3 ? 3 : height >= targetSize ? 2 : 1;
   const deepTotal = maxCols * maxRows;
   const supportsDeepSampling = deepTotal > 4; // True for 3x2 (6), 2x3 (6), or 3x3 (9)
   const deepGrid: GridDimensions = { cols: maxCols, rows: maxRows, total: deepTotal };
@@ -140,12 +154,10 @@ export async function extractRuleOfThirdsPatches(
   if (sampleMode === 'deep' && supportsDeepSampling) {
     activeCols = maxCols;
     activeRows = maxRows;
-  } else if (maxCols >= 2 && maxRows >= 2) {
-    activeCols = 2;
-    activeRows = 2;
   } else {
-    activeCols = maxCols;
-    activeRows = maxRows;
+    // Standard mode: extract 4 corner samples (2x2) whenever both dimensions >= targetSize (allowing overlap)
+    activeCols = width >= targetSize ? 2 : 1;
+    activeRows = height >= targetSize ? 2 : 1;
   }
 
   const currentGrid: GridDimensions = {
