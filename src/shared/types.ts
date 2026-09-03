@@ -33,6 +33,12 @@ export interface MetadataResult {
   qualityScore: number;
 }
 
+export interface GridDimensions {
+  cols: number;
+  rows: number;
+  total: number;
+}
+
 export interface AnalysisResult {
   imageUrl: string;
   status: ImageAnalysisStatus;
@@ -40,8 +46,10 @@ export interface AnalysisResult {
   patchScores: PatchResult[];
   metadata: MetadataResult;
   timestamp: number;
-  supports9Samples?: boolean;
-  sampleMode?: 4 | 9;
+  supportsDeepSampling?: boolean;
+  deepGrid?: GridDimensions;
+  currentGrid?: GridDimensions;
+  sampleMode?: 'standard' | 'deep';
   imageWidth?: number;
   imageHeight?: number;
   error?: string;
@@ -54,7 +62,7 @@ export type ExtensionMessage =
       imageUrl: string;
       priority?: 'high' | 'normal';
       isModal?: boolean;
-      sampleCount?: 4 | 9;
+      sampleMode?: 'standard' | 'deep';
       forceRescan?: boolean;
     }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
@@ -66,7 +74,7 @@ export type ExtensionMessage =
       contentType: string;
       priority?: 'high' | 'normal';
       isModal?: boolean;
-      sampleCount?: 4 | 9;
+      sampleMode?: 'standard' | 'deep';
     }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }

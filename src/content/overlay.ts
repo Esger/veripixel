@@ -123,7 +123,11 @@ function ensureGlobalStyles(): void {
       border-top: 1px solid #1E293B;
     }
 
-    .detectorTooltip__patchesGrid--9Cols {
+    .detectorTooltip__patchesGrid--2Cols {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .detectorTooltip__patchesGrid--3Cols {
       grid-template-columns: 1fr 1fr 1fr;
     }
 
@@ -140,7 +144,7 @@ function ensureGlobalStyles(): void {
       text-overflow: ellipsis;
     }
 
-    .detectorTooltip__patchesGrid--9Cols .detectorTooltip__patchItem {
+    .detectorTooltip__patchesGrid--3Cols .detectorTooltip__patchItem {
       font-size: 9px;
       padding: 3px 4px;
     }
@@ -666,10 +670,11 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     entry.regionEls.push(regionEl);
   });
 
-  const is9Mode = result.sampleMode === 9;
-  const gridClass = is9Mode
-    ? 'detectorTooltip__patchesGrid detectorTooltip__patchesGrid--9Cols'
-    : 'detectorTooltip__patchesGrid';
+  const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
+  const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
+  const isDeepActive = result.sampleMode === 'deep';
+  const gridCols = currentGrid.cols;
+  const gridClass = `detectorTooltip__patchesGrid detectorTooltip__patchesGrid--${gridCols}Cols`;
 
   const patchesHtml = result.patchScores
     .map(
@@ -683,10 +688,12 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     .join('');
 
   let switchButtonHtml = '';
-  if (result.supports9Samples) {
-    const btnText = is9Mode ? 'Switch to 4 samples (2×2)' : 'Switch to 9 samples (3×3)';
+  if (result.supportsDeepSampling) {
+    const btnText = isDeepActive
+      ? 'Switch to standard (4 samples)'
+      : `Switch to ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})`;
     switchButtonHtml = `
-      <button class="detectorTooltip__sampleToggleBtn ${is9Mode ? 'detectorTooltip__sampleToggleBtn--active' : ''}">
+      <button class="detectorTooltip__sampleToggleBtn ${isDeepActive ? 'detectorTooltip__sampleToggleBtn--active' : ''}">
         ${btnText}
       </button>
     `;
@@ -728,24 +735,27 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     }
   });
 
-  // Attach click listener for 4 <-> 9 sample toggle button
+  // Attach click listener for standard <-> deep sample toggle button
   const toggleBtn = tooltipEl.querySelector<HTMLButtonElement>('.detectorTooltip__sampleToggleBtn');
   if (toggleBtn) {
     toggleBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
 
-      const newMode = is9Mode ? 4 : 9;
+      const nextMode: 'standard' | 'deep' = isDeepActive ? 'standard' : 'deep';
       toggleBtn.disabled = true;
       toggleBtn.classList.add('detectorTooltip__sampleToggleBtn--loading');
-      toggleBtn.textContent = `Analyzing ${newMode} sample regions...`;
+      toggleBtn.textContent =
+        nextMode === 'deep'
+          ? `Analyzing ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})...`
+          : `Analyzing standard samples...`;
 
       try {
         chrome.runtime.sendMessage(
           {
             type: 'ANALYZE_IMAGE',
             imageUrl: result.imageUrl,
-            sampleCount: newMode,
+            sampleMode: nextMode,
             forceRescan: true,
             priority: 'high'
           },
@@ -753,7 +763,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
             if (chrome.runtime.lastError || !response || !response.result) {
               toggleBtn.disabled = false;
               toggleBtn.classList.remove('detectorTooltip__sampleToggleBtn--loading');
-              toggleBtn.textContent = is9Mode ? 'Switch to 4 samples (2×2)' : 'Switch to 9 samples (3×3)';
+              toggleBtn.textContent = isDeepActive
+                ? 'Switch to standard (4 samples)'
+                : `Switch to ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})`;
               return;
             }
             if (response.result.status === 'complete') {

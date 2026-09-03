@@ -78,15 +78,15 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   (async () => {
     try {
       if (message.type === 'ANALYZE_IMAGE') {
-        const { imageUrl, priority, isModal, sampleCount, forceRescan } = message;
-        const requestedSampleCount = sampleCount || 4;
+        const { imageUrl, priority, isModal, sampleMode, forceRescan } = message;
+        const requestedSampleMode = sampleMode || 'standard';
 
         // Check cache first (unless forceRescan is requested or sampleMode differs)
         if (!forceRescan) {
           const cached = await getCachedResult(imageUrl);
           if (
             cached &&
-            (cached.sampleMode === requestedSampleCount || (!cached.sampleMode && requestedSampleCount === 4))
+            (cached.sampleMode === requestedSampleMode || (!cached.sampleMode && requestedSampleMode === 'standard'))
           ) {
             sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
             return;
@@ -111,7 +111,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
           return;
         }
 
-        // Relay to Offscreen Document with priority and sampleCount
+        // Relay to Offscreen Document with priority and sampleMode
         chrome.runtime.sendMessage(
           {
             type: 'PROCESS_IMAGE_BUFFER',
@@ -120,7 +120,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
             contentType: fetchedData.contentType,
             priority: priority || 'normal',
             isModal: isModal || false,
-            sampleCount: requestedSampleCount
+            sampleMode: requestedSampleMode
           },
           async (response) => {
             if (chrome.runtime.lastError) {

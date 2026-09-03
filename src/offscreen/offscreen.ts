@@ -116,15 +116,15 @@ async function processImageBuffer(
   contentType = 'image/jpeg',
   priority: 'high' | 'normal' = 'normal',
   isModal = false,
-  sampleCount: 4 | 9 = 4
+  sampleMode: 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
   return queue.run(
     async () => {
       const uint8Array = new Uint8Array(buffer);
       const blob = new Blob([uint8Array], { type: contentType });
 
-      // 1. Extract patches (single crop for <448px, 4 crops, or 9 crops for large images)
-      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleCount);
+      // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
+      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
 
       // 2. Extract EXIF / Metadata
       const metadata = await extractMetadata(blob);
@@ -137,8 +137,10 @@ async function processImageBuffer(
           patchScores: [],
           metadata,
           timestamp: Date.now(),
-          supports9Samples: false,
-          sampleMode: sampleCount,
+          supportsDeepSampling: false,
+          deepGrid: extraction.deepGrid,
+          currentGrid: extraction.currentGrid,
+          sampleMode,
           imageWidth: extraction.width,
           imageHeight: extraction.height,
           error: 'Image too small (<224x224)'
@@ -175,7 +177,9 @@ async function processImageBuffer(
         patchScores,
         metadata,
         timestamp: Date.now(),
-        supports9Samples: extraction.supports9Samples,
+        supportsDeepSampling: extraction.supportsDeepSampling,
+        deepGrid: extraction.deepGrid,
+        currentGrid: extraction.currentGrid,
         sampleMode: extraction.sampleMode,
         imageWidth: extraction.width,
         imageHeight: extraction.height
@@ -195,7 +199,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.contentType,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleCount || 4
+      message.sampleMode || 'standard'
     )
       .then((result) => {
         if (result) {

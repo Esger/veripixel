@@ -1,4 +1,4 @@
-import { PatchBox, PatchPosition } from '../shared/types';
+import { PatchBox, PatchPosition, GridDimensions } from '../shared/types';
 
 export interface ExtractedPatch {
   position: PatchPosition;
@@ -9,26 +9,23 @@ export interface ExtractedPatch {
 
 export interface ExtractionResult {
   patches: ExtractedPatch[];
-  supports9Samples: boolean;
+  supportsDeepSampling: boolean;
+  deepGrid: GridDimensions;
+  currentGrid: GridDimensions;
+  sampleMode: 'standard' | 'deep';
   width: number;
   height: number;
-  sampleMode: 4 | 9;
 }
 
 /**
  * Calculates start and end offsets for 2 crops along an axis with STRICTLY ZERO overlap.
- * If totalLength >= 3 * targetSize, uses ideal rule-of-thirds centers (1/3 and 2/3).
- * If 2 * targetSize <= totalLength < 3 * targetSize, distributes available slack evenly
- * between outer margins and the center gap to shift crops inward toward each other
- * while strictly guaranteeing end >= start + targetSize (zero overlap, no duplicate info).
  */
 function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: number): { start: number; end: number } {
   const maxSlack = totalLength - 2 * targetSize;
   if (maxSlack <= 0) {
-    return { start: 0, end: targetSize };
+    return { start: 0, end: Math.max(0, totalLength - targetSize) };
   }
 
-  // When totalLength >= 3 * targetSize, 1/3 and 2/3 centers naturally have >= targetSize separation
   if (totalLength >= 3 * targetSize) {
     const half = targetSize / 2;
     const start = Math.max(0, Math.round(totalLength * (1 / 3) - half));
@@ -39,8 +36,6 @@ function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: numb
     };
   }
 
-  // When 2 * targetSize <= totalLength < 3 * targetSize:
-  // Distribute slack evenly: 1/3 start margin, 1/3 center gap, 1/3 end margin.
   const margin = Math.floor(maxSlack / 3);
   const start = margin;
   const end = totalLength - targetSize - margin;
@@ -66,73 +61,98 @@ function calculateThreeNonOverlappingOffsets(
 }
 
 /**
- * Extracts patches from image centered on rule-of-thirds grid (4 crops) or 3x3 grid (9 crops) without overlap.
- * For small/medium images (< 2x targetSize = 448px in either dimension), extracts 1 single
- * center crop to strictly prevent crop overlap and duplicate redundant sampling.
+ * Calculates crop offsets along an axis for 1, 2, or 3 non-overlapping crops.
+ */
+function calculateAxisOffsets(totalLength: number, targetSize: number, count: number): number[] {
+  if (count <= 1) {
+    return [Math.max(0, Math.round((totalLength - targetSize) / 2))];
+  }
+  if (count === 2) {
+    const { start, end } = calculateTwoNonOverlappingOffsets(totalLength, targetSize);
+    return [start, end];
+  }
+  const { start, mid, end } = calculateThreeNonOverlappingOffsets(totalLength, targetSize);
+  return [start, mid, end];
+}
+
+/**
+ * Formulates intuitive semantic position names for arbitrary grid dimensions (e.g. 2x2, 3x2, 2x3, 3x3).
+ */
+function getGridPositionName(col: number, row: number, totalCols: number, totalRows: number): PatchPosition {
+  if (totalCols === 1 && totalRows === 1) return 'center';
+
+  const colName = totalCols === 1 ? 'center' : col === 0 ? 'left' : col === totalCols - 1 ? 'right' : 'center';
+  const rowName = totalRows === 1 ? 'middle' : row === 0 ? 'top' : row === totalRows - 1 ? 'bottom' : 'middle';
+
+  if (rowName === 'middle' && colName === 'center') return 'center';
+  if (rowName === 'middle') return `middle-${colName}` as PatchPosition;
+  if (colName === 'center') return `${rowName}-center` as PatchPosition;
+  return `${rowName}-${colName}` as PatchPosition;
+}
+
+/**
+ * Extracts patches from image centered on non-overlapping grid (standard 2x2 or deep 3x2, 2x3, 3x3).
  */
 export async function extractRuleOfThirdsPatches(
   blob: Blob,
   targetSize = 224,
-  sampleMode: 4 | 9 = 4
+  sampleMode: 'standard' | 'deep' = 'standard'
 ): Promise<ExtractionResult> {
   let imageBitmap: ImageBitmap;
   try {
     imageBitmap = await createImageBitmap(blob);
   } catch (err) {
-    return { patches: [], supports9Samples: false, width: 0, height: 0, sampleMode };
+    const emptyGrid = { cols: 0, rows: 0, total: 0 };
+    return { patches: [], supportsDeepSampling: false, deepGrid: emptyGrid, currentGrid: emptyGrid, sampleMode, width: 0, height: 0 };
   }
 
   const { width, height } = imageBitmap;
-  const supports9Samples = width >= targetSize * 3 && height >= targetSize * 3;
 
-  // Skip images smaller than targetSize (224x224) - upscaling introduces distortion and unrealistic scores
+  // Skip images smaller than targetSize (224x224)
   if (width < targetSize || height < targetSize) {
-    return { patches: [], supports9Samples: false, width, height, sampleMode };
+    const emptyGrid = { cols: 0, rows: 0, total: 0 };
+    return { patches: [], supportsDeepSampling: false, deepGrid: emptyGrid, currentGrid: emptyGrid, sampleMode, width, height };
   }
 
+  // Determine maximum non-overlapping crops along each axis
+  const maxCols = width >= targetSize * 3 ? 3 : width >= targetSize * 2 ? 2 : 1;
+  const maxRows = height >= targetSize * 3 ? 3 : height >= targetSize * 2 ? 2 : 1;
+  const deepTotal = maxCols * maxRows;
+  const supportsDeepSampling = deepTotal > 4; // True for 3x2 (6), 2x3 (6), or 3x3 (9)
+  const deepGrid: GridDimensions = { cols: maxCols, rows: maxRows, total: deepTotal };
+
+  // Determine active grid
+  let activeCols = 1;
+  let activeRows = 1;
+
+  if (sampleMode === 'deep' && supportsDeepSampling) {
+    activeCols = maxCols;
+    activeRows = maxRows;
+  } else if (maxCols >= 2 && maxRows >= 2) {
+    activeCols = 2;
+    activeRows = 2;
+  } else {
+    activeCols = 1;
+    activeRows = 1;
+  }
+
+  const currentGrid: GridDimensions = {
+    cols: activeCols,
+    rows: activeRows,
+    total: activeCols * activeRows
+  };
+
+  const xOffsets = calculateAxisOffsets(width, targetSize, activeCols);
+  const yOffsets = calculateAxisOffsets(height, targetSize, activeRows);
   const patches: ExtractedPatch[] = [];
 
-  // For small/medium images (< 448px in either dimension), 2 full crops cannot fit without
-  // overlapping. We use 1 center crop to strictly prevent overlap and loss of information.
-  if (width < targetSize * 2 || height < targetSize * 2) {
-    const canvas = document.createElement('canvas');
-    canvas.width = targetSize;
-    canvas.height = targetSize;
-    const ctx = canvas.getContext('2d');
-    const sx = Math.round((width - targetSize) / 2);
-    const sy = Math.round((height - targetSize) / 2);
+  let patchIndex = 0;
+  for (let r = 0; r < activeRows; r++) {
+    for (let c = 0; c < activeCols; c++) {
+      const sx = xOffsets[c];
+      const sy = yOffsets[r];
+      const position = getGridPositionName(c, r, activeCols, activeRows);
 
-    if (ctx) {
-      ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
-    }
-    const box: PatchBox = {
-      x: sx / width,
-      y: sy / height,
-      width: targetSize / width,
-      height: targetSize / height
-    };
-    patches.push({ position: 'center', patchIndex: 0, canvas, box });
-    return { patches, supports9Samples: false, width, height, sampleMode };
-  }
-
-  // 9-sample mode (3x3 grid) for large images
-  if (sampleMode === 9 && supports9Samples) {
-    const { start: sxLeft, mid: sxMid, end: sxRight } = calculateThreeNonOverlappingOffsets(width, targetSize);
-    const { start: syTop, mid: syMid, end: syBottom } = calculateThreeNonOverlappingOffsets(height, targetSize);
-
-    const cropConfigs9 = [
-      { name: 'top-left' as const, index: 0, sx: sxLeft, sy: syTop },
-      { name: 'top-center' as const, index: 1, sx: sxMid, sy: syTop },
-      { name: 'top-right' as const, index: 2, sx: sxRight, sy: syTop },
-      { name: 'middle-left' as const, index: 3, sx: sxLeft, sy: syMid },
-      { name: 'center' as const, index: 4, sx: sxMid, sy: syMid },
-      { name: 'middle-right' as const, index: 5, sx: sxRight, sy: syMid },
-      { name: 'bottom-left' as const, index: 6, sx: sxLeft, sy: syBottom },
-      { name: 'bottom-center' as const, index: 7, sx: sxMid, sy: syBottom },
-      { name: 'bottom-right' as const, index: 8, sx: sxRight, sy: syBottom }
-    ];
-
-    for (const { name, index, sx, sy } of cropConfigs9) {
       const canvas = document.createElement('canvas');
       canvas.width = targetSize;
       canvas.height = targetSize;
@@ -140,45 +160,25 @@ export async function extractRuleOfThirdsPatches(
       if (ctx) {
         ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
       }
+
       const box: PatchBox = {
         x: sx / width,
         y: sy / height,
         width: targetSize / width,
         height: targetSize / height
       };
-      patches.push({ position: name, patchIndex: index, canvas, box });
-    }
 
-    return { patches, supports9Samples: true, width, height, sampleMode: 9 };
+      patches.push({ position, patchIndex: patchIndex++, canvas, box });
+    }
   }
 
-  // 4-sample mode (2x2 rule-of-thirds grid)
-  const { start: sxLeft, end: sxRight } = calculateTwoNonOverlappingOffsets(width, targetSize);
-  const { start: syTop, end: syBottom } = calculateTwoNonOverlappingOffsets(height, targetSize);
-
-  const cropConfigs4 = [
-    { name: 'top-left' as const, index: 0, sx: sxLeft, sy: syTop },
-    { name: 'top-right' as const, index: 1, sx: sxRight, sy: syTop },
-    { name: 'bottom-left' as const, index: 2, sx: sxLeft, sy: syBottom },
-    { name: 'bottom-right' as const, index: 3, sx: sxRight, sy: syBottom }
-  ];
-
-  for (const { name, index, sx, sy } of cropConfigs4) {
-    const canvas = document.createElement('canvas');
-    canvas.width = targetSize;
-    canvas.height = targetSize;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
-    }
-    const box: PatchBox = {
-      x: sx / width,
-      y: sy / height,
-      width: targetSize / width,
-      height: targetSize / height
-    };
-    patches.push({ position: name, patchIndex: index, canvas, box });
-  }
-
-  return { patches, supports9Samples, width, height, sampleMode: 4 };
+  return {
+    patches,
+    supportsDeepSampling,
+    deepGrid,
+    currentGrid,
+    sampleMode: sampleMode === 'deep' && supportsDeepSampling ? 'deep' : 'standard',
+    width,
+    height
+  };
 }
