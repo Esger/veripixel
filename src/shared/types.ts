@@ -26,8 +26,17 @@ export interface AnalysisResult {
 
 // Message passing types
 export type ExtensionMessage =
-  | { type: 'ANALYZE_IMAGE'; imageUrl: string }
+  | { type: 'ANALYZE_IMAGE'; imageUrl: string; priority?: 'high' | 'normal'; isModal?: boolean }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
+  | { type: 'CANCEL_BACKGROUND_ANALYSIS' }
+  | {
+      type: 'PROCESS_IMAGE_BUFFER';
+      imageUrl: string;
+      buffer: number[];
+      contentType: string;
+      priority?: 'high' | 'normal';
+      isModal?: boolean;
+    }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }
   | { type: 'OFFSCREEN_READY' };

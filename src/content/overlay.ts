@@ -7,6 +7,7 @@ interface BadgeEntry {
 }
 
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
+let prevModalOpen = false;
 
 function ensureGlobalStyles(): void {
   if (document.getElementById('ai-detector-top-layer-styles')) return;
@@ -202,9 +203,37 @@ export function isElementInsideActiveModal(el: HTMLElement, activeModals: HTMLEl
   return false;
 }
 
-export function checkPageModalState(): void {
+export function checkPageModalState(onModalClosed?: () => void): void {
   const activeModals = getActiveModalElements();
   const isModalOpen = activeModals.length > 0;
+
+  // When a modal opens: cancel background calculations and suspend unfinished loading cards
+  if (isModalOpen && !prevModalOpen) {
+    try {
+      if (chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'CANCEL_BACKGROUND_ANALYSIS' }, () => {
+          if (chrome.runtime.lastError) {}
+        });
+      }
+    } catch (e) {}
+
+    for (const [targetEl] of badgeRegistry.entries()) {
+      if (!isElementInsideActiveModal(targetEl, activeModals)) {
+        if (targetEl.dataset.aiDetectorBadgeInjected === 'loading') {
+          delete targetEl.dataset.aiDetectorProcessed;
+          delete targetEl.dataset.aiDetectorBadgeInjected;
+          removeBadge(targetEl);
+        }
+      }
+    }
+  } else if (!isModalOpen && prevModalOpen) {
+    // When modal closes: notify to resume calculations on visible background images
+    if (onModalClosed) {
+      onModalClosed();
+    }
+  }
+
+  prevModalOpen = isModalOpen;
 
   for (const [targetEl, entry] of badgeRegistry.entries()) {
     if (!targetEl.isConnected) {

@@ -78,7 +78,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   (async () => {
     try {
       if (message.type === 'ANALYZE_IMAGE') {
-        const { imageUrl } = message;
+        const { imageUrl, priority, isModal } = message;
 
         // Check cache first
         const cached = await getCachedResult(imageUrl);
@@ -105,13 +105,15 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
           return;
         }
 
-        // Relay to Offscreen Document for ONNX & Metadata processing
+        // Relay to Offscreen Document with priority
         chrome.runtime.sendMessage(
           {
             type: 'PROCESS_IMAGE_BUFFER',
             imageUrl,
             buffer: fetchedData.buffer,
-            contentType: fetchedData.contentType
+            contentType: fetchedData.contentType,
+            priority: priority || 'normal',
+            isModal: isModal || false
           },
           async (response) => {
             if (chrome.runtime.lastError) {
@@ -137,6 +139,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
             }
           }
         );
+      } else if (message.type === 'CANCEL_BACKGROUND_ANALYSIS') {
+        if (await hasOffscreenDocument()) {
+          chrome.runtime.sendMessage({ type: 'CANCEL_BACKGROUND_ANALYSIS' }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+        }
+        sendResponse({ status: 'ok' });
       } else if (message.type === 'GET_PAGE_STATS') {
         const allData = await chrome.storage.session.get(null);
         const results = Object.values(allData).filter(

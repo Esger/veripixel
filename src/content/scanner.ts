@@ -3,7 +3,9 @@ import {
   injectLoadingBadge,
   removeBadge,
   updateBadgePosition,
-  checkPageModalState
+  checkPageModalState,
+  getActiveModalElements,
+  isElementInsideActiveModal
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
@@ -111,6 +113,10 @@ function processElement(el: HTMLElement): void {
     return;
   }
 
+  const activeModals = getActiveModalElements();
+  const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+  const priority = isInsideModal ? 'high' : 'normal';
+
   try {
     if (!isExtensionContextValid()) {
       removeBadge(el);
@@ -118,7 +124,12 @@ function processElement(el: HTMLElement): void {
     }
 
     chrome.runtime.sendMessage(
-      { type: 'ANALYZE_IMAGE', imageUrl } as ExtensionMessage,
+      {
+        type: 'ANALYZE_IMAGE',
+        imageUrl,
+        priority,
+        isModal: isInsideModal
+      } as ExtensionMessage,
       (response) => {
         if (!isExtensionContextValid() || chrome.runtime.lastError) {
           removeBadge(el);
@@ -200,9 +211,17 @@ function scanDOM(): void {
   });
 }
 
+function handleModalStateCheck(): void {
+  checkPageModalState(() => {
+    // When modal closes, resume scanning visible background images
+    setTimeout(() => scanDOM(), 50);
+    setTimeout(() => scanDOM(), 250);
+  });
+}
+
 // Initial DOM Scan
 scanDOM();
-checkPageModalState();
+handleModalStateCheck();
 
 // MutationObserver for dynamically added nodes AND src/srcset/style/class attribute changes (modals)
 const mutationObserver = new MutationObserver((mutations) => {
@@ -253,7 +272,7 @@ const mutationObserver = new MutationObserver((mutations) => {
   }
 
   // Update modal state to hide/revert badges and dropdowns
-  checkPageModalState();
+  handleModalStateCheck();
 });
 
 mutationObserver.observe(document.body, {
@@ -274,7 +293,7 @@ document.addEventListener(
   (e) => {
     const target = e.target as HTMLElement;
     if (target && !target.classList.contains('detectorBadge') && !target.classList.contains('detectorTooltip')) {
-      checkPageModalState();
+      handleModalStateCheck();
     }
   },
   true
@@ -283,7 +302,7 @@ document.addEventListener(
 document.addEventListener(
   'close',
   () => {
-    checkPageModalState();
+    handleModalStateCheck();
   },
   true
 );
@@ -292,7 +311,7 @@ document.addEventListener(
   'keydown',
   (e) => {
     if (e.key === 'Escape') {
-      setTimeout(checkPageModalState, 50);
+      setTimeout(handleModalStateCheck, 50);
     }
   },
   true
@@ -304,11 +323,11 @@ document.addEventListener(
   () => {
     if (!isExtensionContextValid()) return;
     setTimeout(() => {
-      checkPageModalState();
+      handleModalStateCheck();
       scanDOM();
     }, 100);
     setTimeout(() => {
-      checkPageModalState();
+      handleModalStateCheck();
       scanDOM();
     }, 400);
   },
@@ -331,7 +350,7 @@ window.addEventListener(
 document.addEventListener('visibilitychange', () => {
   if (!isExtensionContextValid()) return;
   if (document.visibilityState === 'visible') {
-    checkPageModalState();
+    handleModalStateCheck();
     scanDOM();
   }
 });
