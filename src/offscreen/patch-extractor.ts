@@ -46,35 +46,57 @@ function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: numb
 }
 
 /**
- * Calculates start, mid, and end offsets for 3 non-overlapping crops along an axis,
- * matching the Flexbox `space-around` distribution (centers at 1/6, 1/2, and 5/6).
+ * Uses a real hidden browser Flexbox element with `justify-content: space-around`
+ * to read layout offsets directly from the browser's layout engine without self-calculating.
  */
-function calculateThreeNonOverlappingOffsets(
-  totalLength: number,
-  targetSize: number
-): { start: number; mid: number; end: number } {
-  const maxSlack = totalLength - 3 * targetSize;
-  if (maxSlack <= 0) {
-    return {
-      start: 0,
-      mid: Math.round((totalLength - targetSize) / 2),
-      end: Math.max(0, totalLength - targetSize)
-    };
+function getFlexboxSpaceAroundOffsets(totalLength: number, targetSize: number, count: number): number[] {
+  if (totalLength < targetSize || count <= 1) {
+    return [Math.max(0, Math.round((totalLength - targetSize) / 2))];
   }
 
-  // Flexbox space-around equivalent:
-  // outerMargin is half of the inner gap (maxSlack / 6),
-  // placing item centers directly at 1/6, 1/2, and 5/6 of the axis.
-  const outerMargin = Math.round(maxSlack / 6);
-  const start = outerMargin;
-  const mid = Math.round((totalLength - targetSize) / 2);
-  const end = totalLength - targetSize - outerMargin;
+  if (typeof document !== 'undefined') {
+    const flexContainer = document.createElement('div');
+    flexContainer.style.cssText = `
+      display: flex;
+      flex-direction: row;
+      justify-content: space-around;
+      align-items: center;
+      position: absolute;
+      visibility: hidden;
+      pointer-events: none;
+      width: ${totalLength}px;
+      height: ${targetSize}px;
+    `;
 
-  return { start, mid, end };
+    for (let i = 0; i < count; i++) {
+      const item = document.createElement('div');
+      item.style.cssText = `
+        width: ${targetSize}px;
+        height: ${targetSize}px;
+        flex-shrink: 0;
+      `;
+      flexContainer.appendChild(item);
+    }
+
+    document.body.appendChild(flexContainer);
+    const offsets = Array.from(flexContainer.children).map((child) =>
+      Math.round((child as HTMLElement).offsetLeft)
+    );
+    flexContainer.remove();
+    return offsets;
+  }
+
+  // Fallback if document is somehow unavailable
+  const maxSlack = Math.max(0, totalLength - count * targetSize);
+  const outerMargin = Math.round(maxSlack / (count * 2));
+  const innerGap = Math.round(maxSlack / count);
+  return Array.from({ length: count }, (_, i) => outerMargin + i * (targetSize + innerGap));
 }
 
 /**
  * Calculates crop offsets along an axis for 1, 2, or 3 non-overlapping crops.
+ * - For count = 2 (standard mode): centered on 1/3 and 2/3 raster lines.
+ * - For count = 3 (3x3 mode): uses real browser Flexbox space-around.
  */
 function calculateAxisOffsets(totalLength: number, targetSize: number, count: number): number[] {
   if (totalLength < targetSize || count <= 1) {
@@ -84,8 +106,7 @@ function calculateAxisOffsets(totalLength: number, targetSize: number, count: nu
     const { start, end } = calculateTwoNonOverlappingOffsets(totalLength, targetSize);
     return [start, end];
   }
-  const { start, mid, end } = calculateThreeNonOverlappingOffsets(totalLength, targetSize);
-  return [start, mid, end];
+  return getFlexboxSpaceAroundOffsets(totalLength, targetSize, count);
 }
 
 /**

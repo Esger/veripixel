@@ -311,13 +311,17 @@ function ensureGlobalStyles(): void {
       border-radius: inherit;
     }
 
-    /* Container mimics the real unclipped image size and position */
+    /* Container mimics the real unclipped image size and position using Flexbox space-around */
     .detectorRegions {
       position: absolute;
       top: var(--image-offset-y, 0px);
       left: var(--image-offset-x, 0px);
       width: var(--image-width, 100%);
       height: var(--image-height, 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-around;
+      align-items: stretch;
       pointer-events: none;
       margin: 0;
       padding: 0;
@@ -326,18 +330,18 @@ function ensureGlobalStyles(): void {
       box-sizing: border-box;
     }
 
-    /* Standard Rule of Thirds 3x3 layout */
-    .detectorRegions--standard {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      grid-template-rows: 1fr 1fr 1fr;
-    }
-
-    /* Deep grid layout (3x3, 3x2, 2x3, etc.) */
-    .detectorRegions--grid {
-      display: grid;
-      grid-template-columns: repeat(var(--grid-cols, 3), 1fr);
-      grid-template-rows: repeat(var(--grid-rows, 3), 1fr);
+    /* Rows in flexbox space-around */
+    .detectorRegions__row {
+      display: flex;
+      flex-direction: row;
+      justify-content: space-around;
+      align-items: center;
+      width: 100%;
+      height: var(--region-size, 80px);
+      pointer-events: none;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
 
     /* Individual Region Outlines - Guaranteed 1:1 Square */
@@ -346,6 +350,7 @@ function ensureGlobalStyles(): void {
       width: var(--region-size, 80px);
       height: var(--region-size, 80px);
       aspect-ratio: 1 / 1;
+      flex-shrink: 0;
       pointer-events: none;
       border-radius: 6px;
       border: 2px dashed #10B981;
@@ -860,68 +865,39 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   const gridCols = currentGrid.cols;
   const gridRows = currentGrid.rows;
 
-  if (isDeepActive || gridCols > 2 || gridRows > 2) {
-    containerEl.className = 'detectorRegions detectorRegions--grid';
-    containerEl.style.setProperty('--grid-cols', String(gridCols));
-    containerEl.style.setProperty('--grid-rows', String(gridRows));
-  } else {
-    containerEl.className = 'detectorRegions detectorRegions--standard';
-  }
+  // Create rows using pure Flexbox
+  for (let r = 0; r < gridRows; r++) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'detectorRegions__row';
+    containerEl.appendChild(rowEl);
 
-  result.patchScores.forEach((patch, idx) => {
-    const patchScorePercent = Math.round(patch.aiScore * 100);
+    for (let c = 0; c < gridCols; c++) {
+      const idx = r * gridCols + c;
+      const patch = result.patchScores[idx];
+      if (!patch) continue;
 
-    let modifierClass = 'detectorRegion--lowAi';
-    let regionColor = '#10B981';
-    if (patchScorePercent >= 70) {
-      modifierClass = 'detectorRegion--highAi';
-      regionColor = '#EF4444';
-    } else if (patchScorePercent >= 30) {
-      modifierClass = 'detectorRegion--mediumAi';
-      regionColor = '#F59E0B';
-    }
+      const patchScorePercent = Math.round(patch.aiScore * 100);
 
-    const regionEl = document.createElement('div');
-    regionEl.className = `detectorRegion ${modifierClass}`;
-
-    // Place into the CSS Grid:
-    if (!isDeepActive && gridCols === 2 && gridRows === 2) {
-      // 4-sample Rule of Thirds: Centered directly on 1/3 and 2/3 raster lines
-      const pos = patch.position;
-      if (pos.includes('top') && pos.includes('left')) {
-        regionEl.style.gridColumn = '1 / 3';
-        regionEl.style.gridRow = '1 / 3';
-      } else if (pos.includes('top') && pos.includes('right')) {
-        regionEl.style.gridColumn = '2 / 4';
-        regionEl.style.gridRow = '1 / 3';
-      } else if (pos.includes('bottom') && pos.includes('left')) {
-        regionEl.style.gridColumn = '1 / 3';
-        regionEl.style.gridRow = '2 / 4';
-      } else if (pos.includes('bottom') && pos.includes('right')) {
-        regionEl.style.gridColumn = '2 / 4';
-        regionEl.style.gridRow = '2 / 4';
-      } else {
-        const colIdx = idx % 2;
-        const rowIdx = Math.floor(idx / 2);
-        regionEl.style.gridColumn = colIdx === 0 ? '1 / 3' : '2 / 4';
-        regionEl.style.gridRow = rowIdx === 0 ? '1 / 3' : '2 / 4';
+      let modifierClass = 'detectorRegion--lowAi';
+      let regionColor = '#10B981';
+      if (patchScorePercent >= 70) {
+        modifierClass = 'detectorRegion--highAi';
+        regionColor = '#EF4444';
+      } else if (patchScorePercent >= 30) {
+        modifierClass = 'detectorRegion--mediumAi';
+        regionColor = '#F59E0B';
       }
-      regionEl.style.placeSelf = 'center';
-    } else {
-      // Deep grid or arbitrary grid
-      const colIdx = idx % gridCols;
-      const rowIdx = Math.floor(idx / gridCols);
-      regionEl.style.gridColumn = String(colIdx + 1);
-      regionEl.style.gridRow = String(rowIdx + 1);
-      regionEl.style.placeSelf = 'center';
+
+      const regionEl = document.createElement('div');
+      regionEl.className = `detectorRegion ${modifierClass}`;
+
+      const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
+      regionEl.innerHTML = `<span class="detectorRegion__label" style="border-left: 3px solid ${regionColor}">${formattedPos} (${patchScorePercent}%)</span>`;
+
+      rowEl.appendChild(regionEl);
+      entry.regionEls.push(regionEl);
     }
-
-    const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
-    regionEl.innerHTML = `<span class="detectorRegion__label" style="border-left: 3px solid ${regionColor}">${formattedPos} (${patchScorePercent}%)</span>`;
-
-    entry.regionsContainerEl!.appendChild(regionEl);
-    entry.regionEls.push(regionEl);
-  });
+  }
 
   // Calculate container geometry and read rendered values from the browser
   applyRegionPositions(targetEl, entry);
