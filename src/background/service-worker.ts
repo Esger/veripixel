@@ -1,4 +1,4 @@
-import { ExtensionMessage, AnalysisResult } from '../shared/types';
+import { ExtensionMessage, AnalysisResult, TabScanStats, ImageSummary } from '../shared/types';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 
@@ -73,13 +73,81 @@ async function fetchImageBuffer(url: string): Promise<{ buffer: number[]; conten
   }
 }
 
+// Per-tab scan statistics for toolbar badge and real-time popup updates
+const tabStatsMap = new Map<number, TabScanStats>();
+
+export function getOrCreateTabStats(tabId: number): TabScanStats {
+  let stats = tabStatsMap.get(tabId);
+  if (!stats) {
+    stats = {
+      tabId,
+      totalScanned: 0,
+      aiDetected: 0,
+      suspectedAi: 0,
+      likelyReal: 0,
+      isScanning: false,
+      images: []
+    };
+    tabStatsMap.set(tabId, stats);
+  }
+  return stats;
+}
+
+function updateTabToolbarBadge(tabId: number, stats: TabScanStats): void {
+  try {
+    if (!chrome.action) return;
+
+    if (stats.aiDetected > 0) {
+      chrome.action.setBadgeText({ tabId, text: `${stats.aiDetected}` });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#EF4444' }); // Red
+    } else if (stats.suspectedAi > 0) {
+      chrome.action.setBadgeText({ tabId, text: `${stats.suspectedAi}` });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#F59E0B' }); // Amber/Orange
+    } else if (stats.isScanning) {
+      chrome.action.setBadgeText({ tabId, text: '...' });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#3B82F6' }); // Blue
+    } else {
+      chrome.action.setBadgeText({ tabId, text: '' });
+    }
+  } catch (e) {}
+}
+
+function broadcastTabStatsUpdate(stats: TabScanStats): void {
+  try {
+    chrome.runtime.sendMessage({ type: 'TAB_STATS_UPDATED', stats } as ExtensionMessage).catch(() => {});
+  } catch (e) {}
+}
+
+// Clear stats and badge when a tab reloads or navigates
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading') {
+    tabStatsMap.delete(tabId);
+    if (chrome.action) {
+      chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    }
+  }
+});
+
+// Clean up memory when tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabStatsMap.delete(tabId);
+});
+
 // Listen for messages from Content Scripts, Popup, or Offscreen Document
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   (async () => {
     try {
       if (message.type === 'ANALYZE_IMAGE') {
         const { imageUrl, priority, isModal, sampleMode, forceRescan } = message;
         const requestedSampleMode = sampleMode || 'standard';
+        const tabId = sender.tab?.id;
+
+        if (tabId !== undefined) {
+          const stats = getOrCreateTabStats(tabId);
+          stats.isScanning = true;
+          updateTabToolbarBadge(tabId, stats);
+          broadcastTabStatsUpdate(stats);
+        }
 
         // Check cache first (unless forceRescan is requested or sampleMode differs)
         if (!forceRescan) {
@@ -88,6 +156,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
             cached &&
             (cached.sampleMode === requestedSampleMode || (!cached.sampleMode && requestedSampleMode === 'standard'))
           ) {
+            if (tabId !== undefined) {
+              const stats = getOrCreateTabStats(tabId);
+              stats.isScanning = false;
+              recordTabImageResult(stats, cached);
+              updateTabToolbarBadge(tabId, stats);
+              broadcastTabStatsUpdate(stats);
+            }
             sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
             return;
           }
@@ -107,6 +182,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
             timestamp: Date.now(),
             error: 'Failed to fetch image data'
           };
+          if (tabId !== undefined) {
+            const stats = getOrCreateTabStats(tabId);
+            stats.isScanning = false;
+            updateTabToolbarBadge(tabId, stats);
+            broadcastTabStatsUpdate(stats);
+          }
           sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: errorResult });
           return;
         }
@@ -129,8 +210,21 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
             if (response && response.result) {
               await setCachedResult(imageUrl, response.result);
+              if (tabId !== undefined) {
+                const stats = getOrCreateTabStats(tabId);
+                stats.isScanning = false;
+                recordTabImageResult(stats, response.result);
+                updateTabToolbarBadge(tabId, stats);
+                broadcastTabStatsUpdate(stats);
+              }
               sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: response.result });
             } else if (response && response.cancelled) {
+              if (tabId !== undefined) {
+                const stats = getOrCreateTabStats(tabId);
+                stats.isScanning = false;
+                updateTabToolbarBadge(tabId, stats);
+                broadcastTabStatsUpdate(stats);
+              }
               sendResponse({
                 type: 'IMAGE_ANALYSIS_RESULT',
                 result: {
@@ -143,6 +237,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
                 }
               });
             } else {
+              if (tabId !== undefined) {
+                const stats = getOrCreateTabStats(tabId);
+                stats.isScanning = false;
+                updateTabToolbarBadge(tabId, stats);
+                broadcastTabStatsUpdate(stats);
+              }
               sendResponse({
                 type: 'IMAGE_ANALYSIS_RESULT',
                 result: {
@@ -165,6 +265,27 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
           });
         }
         sendResponse({ status: 'ok' });
+      } else if (message.type === 'GET_TAB_STATS') {
+        const targetTabId = message.tabId;
+        if (targetTabId !== undefined) {
+          const stats = getOrCreateTabStats(targetTabId);
+          sendResponse({ type: 'TAB_STATS_RESULT', stats });
+        } else {
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            const activeId = tabs[0]?.id;
+            const stats = activeId !== undefined ? getOrCreateTabStats(activeId) : {
+              tabId: 0,
+              totalScanned: 0,
+              aiDetected: 0,
+              suspectedAi: 0,
+              likelyReal: 0,
+              isScanning: false,
+              images: []
+            };
+            sendResponse({ type: 'TAB_STATS_RESULT', stats });
+          });
+          return;
+        }
       } else if (message.type === 'GET_PAGE_STATS') {
         const allData = await chrome.storage.session.get(null);
         const results = Object.values(allData).filter(
@@ -197,5 +318,30 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
   return true; // Keep message channel open for async response
 });
+
+function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void {
+  if (result.status !== 'complete') return;
+
+  const summaryItem: ImageSummary = {
+    imageUrl: result.imageUrl,
+    aiScore: result.aiScore,
+    status: result.status,
+    timestamp: result.timestamp,
+    cameraModel: result.metadata.cameraModel,
+    c2paPresent: result.metadata.c2paPresent
+  };
+
+  const existingIdx = stats.images.findIndex((img) => img.imageUrl === result.imageUrl);
+  if (existingIdx >= 0) {
+    stats.images[existingIdx] = summaryItem;
+  } else {
+    stats.images.unshift(summaryItem);
+  }
+
+  stats.totalScanned = stats.images.length;
+  stats.aiDetected = stats.images.filter((img) => img.aiScore >= 0.7).length;
+  stats.suspectedAi = stats.images.filter((img) => img.aiScore >= 0.3 && img.aiScore < 0.7).length;
+  stats.likelyReal = stats.images.filter((img) => img.aiScore < 0.3).length;
+}
 
 console.log('[Background] Service worker initialized.');

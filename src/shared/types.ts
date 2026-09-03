@@ -55,6 +55,25 @@ export interface AnalysisResult {
   error?: string;
 }
 
+export interface ImageSummary {
+  imageUrl: string;
+  aiScore: number;
+  status: ImageAnalysisStatus;
+  timestamp: number;
+  cameraModel?: string;
+  c2paPresent?: boolean;
+}
+
+export interface TabScanStats {
+  tabId: number;
+  totalScanned: number;
+  aiDetected: number; // score >= 0.70
+  suspectedAi: number; // 0.30 <= score < 0.70
+  likelyReal: number; // score < 0.30
+  isScanning: boolean;
+  images: ImageSummary[];
+}
+
 // Message passing types
 export type ExtensionMessage =
   | {
@@ -78,4 +97,8 @@ export type ExtensionMessage =
     }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }
+  | { type: 'GET_TAB_STATS'; tabId?: number }
+  | { type: 'TAB_STATS_RESULT'; stats: TabScanStats }
+  | { type: 'TAB_STATS_UPDATED'; stats: TabScanStats }
+  | { type: 'HIGHLIGHT_IMAGE_ON_PAGE'; imageUrl: string }
   | { type: 'OFFSCREEN_READY' };

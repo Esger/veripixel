@@ -385,3 +385,25 @@ document.addEventListener('visibilitychange', () => {
     scanDOM();
   }
 });
+
+// Listen for popup jump-to-image requests
+chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
+  if (message.type === 'HIGHLIGHT_IMAGE_ON_PAGE') {
+    const targetUrl = message.imageUrl;
+    const allImages = document.querySelectorAll<HTMLElement>('img, [style*="background"]');
+    for (const el of allImages) {
+      if (getElementImageUrl(el) === targetUrl) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.transition = 'outline 0.3s ease, box-shadow 0.3s ease';
+        el.style.outline = '4px solid #3B82F6';
+        el.style.boxShadow = '0 0 20px rgba(59, 130, 246, 0.7)';
+        setTimeout(() => {
+          el.style.outline = '';
+          el.style.boxShadow = '';
+        }, 2200);
+        break;
+      }
+    }
+  }
+});
+
