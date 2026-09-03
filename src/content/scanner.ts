@@ -73,9 +73,14 @@ function isValidTargetElement(el: HTMLElement): boolean {
   const renderedWidth = rect.width || el.offsetWidth || 0;
   const renderedHeight = rect.height || el.offsetHeight || 0;
 
-  // Rendered size on screen must be at least MIN_IMAGE_SIZE (224px).
-  // This strictly eliminates small avatars, profile thumbnails, icons, and buttons!
-  if (renderedWidth < MIN_IMAGE_SIZE || renderedHeight < MIN_IMAGE_SIZE) {
+  // If BOTH sides are smaller than MIN_IMAGE_SIZE (224px), skip!
+  // This eliminates small avatars, profile thumbnails, button icons, etc.
+  if (renderedWidth < MIN_IMAGE_SIZE && renderedHeight < MIN_IMAGE_SIZE) {
+    return false;
+  }
+
+  // Avoid thin 1px/10px divider lines or separator bars
+  if (renderedWidth < 30 || renderedHeight < 30) {
     return false;
   }
 
@@ -84,7 +89,7 @@ function isValidTargetElement(el: HTMLElement): boolean {
     const naturalWidth = el.naturalWidth || 0;
     const naturalHeight = el.naturalHeight || 0;
     if (naturalWidth > 0 && naturalHeight > 0) {
-      if (naturalWidth < MIN_IMAGE_SIZE || naturalHeight < MIN_IMAGE_SIZE) {
+      if (naturalWidth < MIN_IMAGE_SIZE && naturalHeight < MIN_IMAGE_SIZE) {
         return false;
       }
     }

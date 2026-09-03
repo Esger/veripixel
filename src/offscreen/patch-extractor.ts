@@ -64,7 +64,7 @@ function calculateThreeNonOverlappingOffsets(
  * Calculates crop offsets along an axis for 1, 2, or 3 non-overlapping crops.
  */
 function calculateAxisOffsets(totalLength: number, targetSize: number, count: number): number[] {
-  if (count <= 1) {
+  if (totalLength < targetSize || count <= 1) {
     return [Math.max(0, Math.round((totalLength - targetSize) / 2))];
   }
   if (count === 2) {
@@ -76,13 +76,25 @@ function calculateAxisOffsets(totalLength: number, targetSize: number, count: nu
 }
 
 /**
- * Formulates intuitive semantic position names for arbitrary grid dimensions (e.g. 2x2, 3x2, 2x3, 3x3).
+ * Formulates intuitive semantic position names for arbitrary grid dimensions (e.g. 2x2, 3x2, 2x3, 3x3, 2x1, 1x2).
  */
 function getGridPositionName(col: number, row: number, totalCols: number, totalRows: number): PatchPosition {
   if (totalCols === 1 && totalRows === 1) return 'center';
 
-  const colName = totalCols === 1 ? 'center' : col === 0 ? 'left' : col === totalCols - 1 ? 'right' : 'center';
-  const rowName = totalRows === 1 ? 'middle' : row === 0 ? 'top' : row === totalRows - 1 ? 'bottom' : 'middle';
+  if (totalRows === 1) {
+    if (col === 0) return 'middle-left';
+    if (col === totalCols - 1) return 'middle-right';
+    return 'center';
+  }
+
+  if (totalCols === 1) {
+    if (row === 0) return 'top-center';
+    if (row === totalRows - 1) return 'bottom-center';
+    return 'center';
+  }
+
+  const colName = col === 0 ? 'left' : col === totalCols - 1 ? 'right' : 'center';
+  const rowName = row === 0 ? 'top' : row === totalRows - 1 ? 'bottom' : 'middle';
 
   if (rowName === 'middle' && colName === 'center') return 'center';
   if (rowName === 'middle') return `middle-${colName}` as PatchPosition;
@@ -91,7 +103,10 @@ function getGridPositionName(col: number, row: number, totalCols: number, totalR
 }
 
 /**
- * Extracts patches from image centered on non-overlapping grid (standard 2x2 or deep 3x2, 2x3, 3x3).
+ * Extracts patches from image centered on non-overlapping grid.
+ * If only one of the sides is >= targetSize (224), the missing part on the smaller side
+ * is filled with black letterbox/pillarbox padding to preserve aspect ratio without adding AI artifacts.
+ * If BOTH sides are < targetSize (224), returns empty patches to skip small avatars.
  */
 export async function extractRuleOfThirdsPatches(
   blob: Blob,
@@ -108,8 +123,8 @@ export async function extractRuleOfThirdsPatches(
 
   const { width, height } = imageBitmap;
 
-  // Skip images smaller than targetSize (224x224)
-  if (width < targetSize || height < targetSize) {
+  // Skip images where BOTH sides are smaller than targetSize (224x224)
+  if (width < targetSize && height < targetSize) {
     const emptyGrid = { cols: 0, rows: 0, total: 0 };
     return { patches: [], supportsDeepSampling: false, deepGrid: emptyGrid, currentGrid: emptyGrid, sampleMode, width, height };
   }
@@ -132,8 +147,8 @@ export async function extractRuleOfThirdsPatches(
     activeCols = 2;
     activeRows = 2;
   } else {
-    activeCols = 1;
-    activeRows = 1;
+    activeCols = maxCols;
+    activeRows = maxRows;
   }
 
   const currentGrid: GridDimensions = {
@@ -149,23 +164,72 @@ export async function extractRuleOfThirdsPatches(
   let patchIndex = 0;
   for (let r = 0; r < activeRows; r++) {
     for (let c = 0; c < activeCols; c++) {
-      const sx = xOffsets[c];
-      const sy = yOffsets[r];
       const position = getGridPositionName(c, r, activeCols, activeRows);
 
       const canvas = document.createElement('canvas');
       canvas.width = targetSize;
       canvas.height = targetSize;
       const ctx = canvas.getContext('2d');
+
+      let sx = 0;
+      let sy = 0;
+      let sw = targetSize;
+      let sh = targetSize;
+      let dx = 0;
+      let dy = 0;
+      let dw = targetSize;
+      let dh = targetSize;
+      let boxX = 0;
+      let boxY = 0;
+      let boxW = 1;
+      let boxH = 1;
+
+      if (width >= targetSize) {
+        sx = xOffsets[c];
+        sw = targetSize;
+        dx = 0;
+        dw = targetSize;
+        boxX = sx / width;
+        boxW = targetSize / width;
+      } else {
+        // Width is smaller than targetSize: center image horizontally with black padding
+        sx = 0;
+        sw = width;
+        dx = Math.round((targetSize - width) / 2);
+        dw = width;
+        boxX = 0;
+        boxW = 1;
+      }
+
+      if (height >= targetSize) {
+        sy = yOffsets[r];
+        sh = targetSize;
+        dy = 0;
+        dh = targetSize;
+        boxY = sy / height;
+        boxH = targetSize / height;
+      } else {
+        // Height is smaller than targetSize: center image vertically with black padding
+        sy = 0;
+        sh = height;
+        dy = Math.round((targetSize - height) / 2);
+        dh = height;
+        boxY = 0;
+        boxH = 1;
+      }
+
       if (ctx) {
-        ctx.drawImage(imageBitmap, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
+        // Fill missing part with pure neutral black (no artificial AI features or noise)
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, targetSize, targetSize);
+        ctx.drawImage(imageBitmap, sx, sy, sw, sh, dx, dy, dw, dh);
       }
 
       const box: PatchBox = {
-        x: sx / width,
-        y: sy / height,
-        width: targetSize / width,
-        height: targetSize / height
+        x: boxX,
+        y: boxY,
+        width: boxW,
+        height: boxH
       };
 
       patches.push({ position, patchIndex: patchIndex++, canvas, box });
