@@ -115,20 +115,21 @@ async function processImageBuffer(
   buffer: number[],
   contentType = 'image/jpeg',
   priority: 'high' | 'normal' = 'normal',
-  isModal = false
+  isModal = false,
+  sampleCount: 4 | 9 = 4
 ): Promise<AnalysisResult | null> {
   return queue.run(
     async () => {
       const uint8Array = new Uint8Array(buffer);
       const blob = new Blob([uint8Array], { type: contentType });
 
-      // 1. Extract patches (single crop for <448px, 4 rule-of-thirds patches for large)
-      const patches = await extractRuleOfThirdsPatches(blob, 224);
+      // 1. Extract patches (single crop for <448px, 4 crops, or 9 crops for large images)
+      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleCount);
 
       // 2. Extract EXIF / Metadata
       const metadata = await extractMetadata(blob);
 
-      if (patches.length === 0) {
+      if (extraction.patches.length === 0) {
         return {
           imageUrl,
           status: 'error',
@@ -136,13 +137,17 @@ async function processImageBuffer(
           patchScores: [],
           metadata,
           timestamp: Date.now(),
+          supports9Samples: false,
+          sampleMode: sampleCount,
+          imageWidth: extraction.width,
+          imageHeight: extraction.height,
           error: 'Image too small (<224x224)'
         };
       }
 
       // 3. Compute patch scores via ONNX Runtime Web
       const patchScores: PatchResult[] = [];
-      for (const patch of patches) {
+      for (const patch of extraction.patches) {
         const aiScore = await runPatchInference(patch.canvas);
         patchScores.push({
           patchIndex: patch.patchIndex,
@@ -169,7 +174,11 @@ async function processImageBuffer(
         aiScore: aggregatedScore,
         patchScores,
         metadata,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        supports9Samples: extraction.supports9Samples,
+        sampleMode: extraction.sampleMode,
+        imageWidth: extraction.width,
+        imageHeight: extraction.height
       };
     },
     priority,
@@ -185,7 +194,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.buffer,
       message.contentType,
       message.priority || 'normal',
-      message.isModal || false
+      message.isModal || false,
+      message.sampleCount || 4
     )
       .then((result) => {
         if (result) {

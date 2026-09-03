@@ -89,7 +89,7 @@ function ensureGlobalStyles(): void {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 12px;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      width: 220px;
+      width: 250px;
       z-index: 2147483647;
     }
 
@@ -123,6 +123,10 @@ function ensureGlobalStyles(): void {
       border-top: 1px solid #1E293B;
     }
 
+    .detectorTooltip__patchesGrid--9Cols {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
     .detectorTooltip__patchItem {
       background: #1E293B;
       padding: 4px 6px;
@@ -131,11 +135,59 @@ function ensureGlobalStyles(): void {
       text-align: center;
       cursor: pointer;
       transition: background 0.15s ease, transform 0.15s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .detectorTooltip__patchesGrid--9Cols .detectorTooltip__patchItem {
+      font-size: 9px;
+      padding: 3px 4px;
     }
 
     .detectorTooltip__patchItem:hover {
       background: #334155;
       transform: translateY(-1px);
+    }
+
+    .detectorTooltip__sampleToggleBtn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #3B82F6;
+      background: rgba(59, 130, 246, 0.15);
+      color: #93C5FD;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
+    }
+
+    .detectorTooltip__sampleToggleBtn:hover {
+      background: rgba(59, 130, 246, 0.3);
+      border-color: #60A5FA;
+      transform: translateY(-1px);
+    }
+
+    .detectorTooltip__sampleToggleBtn:active {
+      transform: translateY(0);
+    }
+
+    .detectorTooltip__sampleToggleBtn--active {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: #10B981;
+      color: #6EE7B7;
+    }
+
+    .detectorTooltip__sampleToggleBtn--loading {
+      opacity: 0.7;
+      cursor: wait;
     }
 
     /* Native CSS Anchor Positioned Region Outlines */
@@ -526,12 +578,8 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 }
 
 export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
-  if (targetEl.dataset.aiDetectorBadgeInjected === 'true') {
-    return;
-  }
-
   // Ensure loading badge is created if not already present
-  if (targetEl.dataset.aiDetectorBadgeInjected !== 'loading') {
+  if (!targetEl.dataset.aiDetectorBadgeInjected) {
     injectLoadingBadge(targetEl);
   }
   targetEl.dataset.aiDetectorBadgeInjected = 'true';
@@ -618,14 +666,31 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     entry.regionEls.push(regionEl);
   });
 
+  const is9Mode = result.sampleMode === 9;
+  const gridClass = is9Mode
+    ? 'detectorTooltip__patchesGrid detectorTooltip__patchesGrid--9Cols'
+    : 'detectorTooltip__patchesGrid';
+
   const patchesHtml = result.patchScores
     .map(
       (p, idx) =>
-        `<div class="detectorTooltip__patchItem" data-patch-index="${idx}">${p.position}: <strong style="color: ${
-          p.aiScore >= 0.7 ? '#EF4444' : '#10B981'
-        }">${Math.round(p.aiScore * 100)}%</strong></div>`
+        `<div class="detectorTooltip__patchItem" data-patch-index="${idx}" title="${p.position}: ${Math.round(
+          p.aiScore * 100
+        )}%">${p.position}: <strong style="color: ${p.aiScore >= 0.7 ? '#EF4444' : '#10B981'}">${Math.round(
+          p.aiScore * 100
+        )}%</strong></div>`
     )
     .join('');
+
+  let switchButtonHtml = '';
+  if (result.supports9Samples) {
+    const btnText = is9Mode ? 'Switch to 4 samples (2×2)' : 'Switch to 9 samples (3×3)';
+    switchButtonHtml = `
+      <button class="detectorTooltip__sampleToggleBtn ${is9Mode ? 'detectorTooltip__sampleToggleBtn--active' : ''}">
+        ${btnText}
+      </button>
+    `;
+  }
 
   tooltipEl.innerHTML = `
     <div class="detectorTooltip__header" style="color: ${color}">
@@ -644,9 +709,10 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       <span>Quality score:</span>
       <span class="detectorTooltip__val">${Math.round(result.metadata.qualityScore * 100)}%</span>
     </div>
-    <div class="detectorTooltip__patchesGrid">
+    <div class="${gridClass}">
       ${patchesHtml}
     </div>
+    ${switchButtonHtml}
   `;
 
   // Attach hover highlight listeners to patch items in tooltip
@@ -661,6 +727,50 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       });
     }
   });
+
+  // Attach click listener for 4 <-> 9 sample toggle button
+  const toggleBtn = tooltipEl.querySelector<HTMLButtonElement>('.detectorTooltip__sampleToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const newMode = is9Mode ? 4 : 9;
+      toggleBtn.disabled = true;
+      toggleBtn.classList.add('detectorTooltip__sampleToggleBtn--loading');
+      toggleBtn.textContent = `Analyzing ${newMode} sample regions...`;
+
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'ANALYZE_IMAGE',
+            imageUrl: result.imageUrl,
+            sampleCount: newMode,
+            forceRescan: true,
+            priority: 'high'
+          },
+          (response) => {
+            if (chrome.runtime.lastError || !response || !response.result) {
+              toggleBtn.disabled = false;
+              toggleBtn.classList.remove('detectorTooltip__sampleToggleBtn--loading');
+              toggleBtn.textContent = is9Mode ? 'Switch to 4 samples (2×2)' : 'Switch to 9 samples (3×3)';
+              return;
+            }
+            if (response.result.status === 'complete') {
+              injectImageBadge(targetEl, response.result);
+              if (tooltipEl.matches(':popover-open')) {
+                const currentEntry = badgeRegistry.get(targetEl);
+                if (currentEntry) showRegionsForEntry(currentEntry);
+              }
+            }
+          }
+        );
+      } catch (err) {
+        toggleBtn.disabled = false;
+        toggleBtn.classList.remove('detectorTooltip__sampleToggleBtn--loading');
+      }
+    });
+  }
 
   updateBadgePosition(targetEl);
 }

@@ -7,9 +7,20 @@ export interface PatchBox {
   height: number; // 0.0 - 1.0 (relative to image height)
 }
 
+export type PatchPosition =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'middle-left'
+  | 'center'
+  | 'middle-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right';
+
 export interface PatchResult {
   patchIndex: number;
-  position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+  position: PatchPosition;
   aiScore: number;
   box?: PatchBox;
 }
@@ -29,12 +40,23 @@ export interface AnalysisResult {
   patchScores: PatchResult[];
   metadata: MetadataResult;
   timestamp: number;
+  supports9Samples?: boolean;
+  sampleMode?: 4 | 9;
+  imageWidth?: number;
+  imageHeight?: number;
   error?: string;
 }
 
 // Message passing types
 export type ExtensionMessage =
-  | { type: 'ANALYZE_IMAGE'; imageUrl: string; priority?: 'high' | 'normal'; isModal?: boolean }
+  | {
+      type: 'ANALYZE_IMAGE';
+      imageUrl: string;
+      priority?: 'high' | 'normal';
+      isModal?: boolean;
+      sampleCount?: 4 | 9;
+      forceRescan?: boolean;
+    }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
   | { type: 'CANCEL_BACKGROUND_ANALYSIS' }
   | {
@@ -44,6 +66,7 @@ export type ExtensionMessage =
       contentType: string;
       priority?: 'high' | 'normal';
       isModal?: boolean;
+      sampleCount?: 4 | 9;
     }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }

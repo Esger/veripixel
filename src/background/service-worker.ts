@@ -78,13 +78,19 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   (async () => {
     try {
       if (message.type === 'ANALYZE_IMAGE') {
-        const { imageUrl, priority, isModal } = message;
+        const { imageUrl, priority, isModal, sampleCount, forceRescan } = message;
+        const requestedSampleCount = sampleCount || 4;
 
-        // Check cache first
-        const cached = await getCachedResult(imageUrl);
-        if (cached) {
-          sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
-          return;
+        // Check cache first (unless forceRescan is requested or sampleMode differs)
+        if (!forceRescan) {
+          const cached = await getCachedResult(imageUrl);
+          if (
+            cached &&
+            (cached.sampleMode === requestedSampleCount || (!cached.sampleMode && requestedSampleCount === 4))
+          ) {
+            sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
+            return;
+          }
         }
 
         await ensureOffscreenDocumentExists();
@@ -105,7 +111,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
           return;
         }
 
-        // Relay to Offscreen Document with priority
+        // Relay to Offscreen Document with priority and sampleCount
         chrome.runtime.sendMessage(
           {
             type: 'PROCESS_IMAGE_BUFFER',
@@ -113,7 +119,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
             buffer: fetchedData.buffer,
             contentType: fetchedData.contentType,
             priority: priority || 'normal',
-            isModal: isModal || false
+            isModal: isModal || false,
+            sampleCount: requestedSampleCount
           },
           async (response) => {
             if (chrome.runtime.lastError) {
