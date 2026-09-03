@@ -6,8 +6,7 @@ interface BadgeEntry {
   anchorName: string;
 }
 
-const badgeRegistry = new WeakMap<HTMLElement, BadgeEntry>();
-let isSuspendedDueToModal = false;
+const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
 
 function ensureGlobalStyles(): void {
   if (document.getElementById('ai-detector-top-layer-styles')) return;
@@ -143,34 +142,36 @@ function isElementVisible(el: HTMLElement): boolean {
   return rect.width > 0 && rect.height > 0;
 }
 
-export function isPageModalActive(): boolean {
-  // 1. Check for native <dialog open> (excluding our own elements)
+export function getActiveModalElements(): HTMLElement[] {
+  const activeModals: HTMLElement[] = [];
+
+  // 1. Native <dialog open> (excluding our own elements)
   const openDialogs = document.querySelectorAll<HTMLDialogElement>('dialog[open]');
   for (const dialog of openDialogs) {
     if (!dialog.classList.contains('detectorBadge') && !dialog.classList.contains('detectorTooltip')) {
-      return true;
+      activeModals.push(dialog);
     }
   }
 
-  // 2. Check for native open popovers on the page (excluding our own elements)
+  // 2. Open popovers on page (excluding our own elements)
   const popovers = document.querySelectorAll<HTMLElement>('[popover]:not(.detectorBadge):not(.detectorTooltip)');
   for (const popover of popovers) {
     try {
       if (popover.matches(':popover-open')) {
-        return true;
+        activeModals.push(popover);
       }
     } catch (e) {}
   }
 
-  // 3. Check for elements with aria-modal="true" that are visible
+  // 3. Elements with aria-modal="true" that are visible
   const ariaModals = document.querySelectorAll<HTMLElement>('[aria-modal="true"]');
   for (const modal of ariaModals) {
-    if (isElementVisible(modal)) {
-      return true;
+    if (isElementVisible(modal) && !activeModals.includes(modal)) {
+      activeModals.push(modal);
     }
   }
 
-  // 4. Check for visible fixed/absolute elements with class containing modal, dialog, or lightbox
+  // 4. Fixed or absolute elements with class containing modal, dialog, or lightbox
   const modalCandidates = document.querySelectorAll<HTMLElement>(
     '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip), ' +
     '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip), ' +
@@ -182,77 +183,80 @@ export function isPageModalActive(): boolean {
       const style = window.getComputedStyle(candidate);
       if (style.position === 'fixed' || style.position === 'absolute' || candidate.tagName === 'DIALOG') {
         const rect = candidate.getBoundingClientRect();
-        if (rect.width > 120 && rect.height > 120) {
-          return true;
+        if (rect.width > 120 && rect.height > 120 && !activeModals.includes(candidate)) {
+          activeModals.push(candidate);
         }
       }
     }
   }
 
-  // 5. Check body / html classes commonly used to indicate modal active states
-  const bodyClasses = (document.body.className + ' ' + document.documentElement.className).toLowerCase();
-  if (
-    bodyClasses.includes('modal-open') ||
-    bodyClasses.includes('has-modal') ||
-    bodyClasses.includes('overcast') ||
-    bodyClasses.includes('dialog-open')
-  ) {
-    return true;
-  }
+  return activeModals;
+}
 
+export function isElementInsideActiveModal(el: HTMLElement, activeModals: HTMLElement[]): boolean {
+  for (const modal of activeModals) {
+    if (modal === el || modal.contains(el)) {
+      return true;
+    }
+  }
   return false;
 }
 
-export function setModalSuspended(suspended: boolean): void {
-  if (isSuspendedDueToModal === suspended) return;
-  isSuspendedDueToModal = suspended;
-
-  const allBadges = document.querySelectorAll<HTMLElement>('.detectorBadge');
-  const allTooltips = document.querySelectorAll<HTMLElement>('.detectorTooltip');
-
-  if (suspended) {
-    allBadges.forEach((badge) => {
-      try {
-        if (badge.matches(':popover-open')) {
-          badge.hidePopover();
-        }
-      } catch (e) {}
-      badge.style.display = 'none';
-    });
-    allTooltips.forEach((tooltip) => {
-      try {
-        if (tooltip.matches(':popover-open')) {
-          tooltip.hidePopover();
-        }
-      } catch (e) {}
-      tooltip.style.display = 'none';
-    });
-  } else {
-    allBadges.forEach((badge) => {
-      badge.style.display = '';
-      try {
-        if (!badge.matches(':popover-open')) {
-          badge.showPopover();
-        }
-      } catch (e) {}
-    });
-    allTooltips.forEach((tooltip) => {
-      tooltip.style.display = '';
-    });
-  }
-}
-
 export function checkPageModalState(): void {
-  setModalSuspended(isPageModalActive());
+  const activeModals = getActiveModalElements();
+  const isModalOpen = activeModals.length > 0;
+
+  for (const [targetEl, entry] of badgeRegistry.entries()) {
+    if (!targetEl.isConnected) {
+      removeBadge(targetEl);
+      continue;
+    }
+
+    const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
+
+    if (isModalOpen && !isInsideModal) {
+      // Hide background badges
+      try {
+        if (entry.badgeEl.matches(':popover-open')) {
+          entry.badgeEl.hidePopover();
+        }
+      } catch (e) {}
+      entry.badgeEl.style.display = 'none';
+
+      try {
+        if (entry.tooltipEl.matches(':popover-open')) {
+          entry.tooltipEl.hidePopover();
+        }
+      } catch (e) {}
+      entry.tooltipEl.style.display = 'none';
+    } else {
+      // Element is inside the active modal (or no modal is open): keep/restore badge open!
+      entry.badgeEl.style.display = '';
+      updateBadgePosition(targetEl);
+    }
+  }
 }
 
 export function updateBadgePosition(targetEl: HTMLElement): void {
   const entry = badgeRegistry.get(targetEl);
   if (!entry) return;
 
-  if (isSuspendedDueToModal) {
+  const activeModals = getActiveModalElements();
+  const isModalOpen = activeModals.length > 0;
+  const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
+
+  // If a modal is open and this element is OUTSIDE it, hide it
+  if (isModalOpen && !isInsideModal) {
+    if (entry.badgeEl.matches(':popover-open')) {
+      try {
+        entry.badgeEl.hidePopover();
+      } catch (e) {}
+    }
+    entry.badgeEl.style.display = 'none';
     return;
   }
+
+  entry.badgeEl.style.display = '';
 
   const rect = targetEl.getBoundingClientRect();
   const hasDimensions = rect.width > 0 && rect.height > 0;
@@ -275,7 +279,7 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
     return;
   }
 
-  // Ensure badge is ALWAYS open by default in top-layer
+  // Ensure badge is open by default in top-layer
   if (!entry.badgeEl.matches(':popover-open')) {
     try {
       entry.badgeEl.showPopover();
@@ -374,8 +378,13 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 
   badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName });
 
-  // Open badge popover immediately by default unless page modal is active
-  if (isSuspendedDueToModal) {
+  const activeModals = getActiveModalElements();
+  const isModalOpen = activeModals.length > 0;
+  const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
+
+  // If a modal is open and this element is NOT in it, hide it.
+  // If it IS in the modal (or no modal is open), open it immediately!
+  if (isModalOpen && !isInsideModal) {
     badgeEl.style.display = 'none';
   } else {
     try {
@@ -403,11 +412,17 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 
   const { badgeEl, tooltipEl } = entry;
 
-  // Ensure badge popover is open by default unless page modal is active
-  if (!isSuspendedDueToModal && !badgeEl.matches(':popover-open')) {
-    try {
-      badgeEl.showPopover();
-    } catch (e) {}
+  const activeModals = getActiveModalElements();
+  const isModalOpen = activeModals.length > 0;
+  const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
+
+  // Ensure badge popover is open if in modal or no modal is active
+  if (!isModalOpen || isInsideModal) {
+    if (!badgeEl.matches(':popover-open')) {
+      try {
+        badgeEl.showPopover();
+      } catch (e) {}
+    }
   }
 
   const scorePercent = Math.round(result.aiScore * 100);
@@ -468,9 +483,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     </div>
   `;
 
-  if (!isSuspendedDueToModal) {
-    updateBadgePosition(targetEl);
-  }
+  updateBadgePosition(targetEl);
 }
 
 export function removeBadge(targetEl: HTMLElement): void {
