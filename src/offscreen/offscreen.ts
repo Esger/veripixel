@@ -6,13 +6,13 @@ import { runPatchInference } from './model-runner';
 console.log('[Offscreen] Document script active.');
 
 interface QueuedTask {
-  resolve: () => void;
-  reject: (err: any) => void;
+  run: () => void;
+  cancel: () => void;
   priority: 'high' | 'normal';
   isModal: boolean;
 }
 
-// Queue concurrency limiter with priority queueing and modal cancellation
+// Queue concurrency limiter with priority queueing and graceful cancellation
 class PriorityConcurrencyQueue {
   private active = 0;
   private queue: QueuedTask[] = [];
@@ -23,10 +23,15 @@ class PriorityConcurrencyQueue {
     task: () => Promise<T>,
     priority: 'high' | 'normal' = 'normal',
     isModal = false
-  ): Promise<T> {
+  ): Promise<T | null> {
     if (this.active >= this.maxConcurrent) {
-      await new Promise<void>((resolve, reject) => {
-        const item: QueuedTask = { resolve, reject, priority, isModal };
+      const waitPromise = new Promise<boolean>((resolve) => {
+        const item: QueuedTask = {
+          run: () => resolve(true),
+          cancel: () => resolve(false),
+          priority,
+          isModal
+        };
         if (priority === 'high' || isModal) {
           // Jump to the front of the queue
           this.queue.unshift(item);
@@ -34,6 +39,12 @@ class PriorityConcurrencyQueue {
           this.queue.push(item);
         }
       });
+
+      const proceed = await waitPromise;
+      if (!proceed) {
+        // Gracefully cancelled without throwing errors
+        return null;
+      }
     }
 
     this.active++;
@@ -43,7 +54,7 @@ class PriorityConcurrencyQueue {
       this.active--;
       if (this.queue.length > 0) {
         const next = this.queue.shift();
-        if (next) next.resolve();
+        if (next) next.run();
       }
     }
   }
@@ -54,7 +65,7 @@ class PriorityConcurrencyQueue {
       if (item.priority === 'high' || item.isModal) {
         remaining.push(item);
       } else {
-        item.reject(new Error('Cancelled due to modal priority'));
+        item.cancel();
       }
     }
     this.queue = remaining;
@@ -105,7 +116,7 @@ async function processImageBuffer(
   contentType = 'image/jpeg',
   priority: 'high' | 'normal' = 'normal',
   isModal = false
-): Promise<AnalysisResult> {
+): Promise<AnalysisResult | null> {
   return queue.run(
     async () => {
       const uint8Array = new Uint8Array(buffer);
@@ -175,10 +186,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.priority || 'normal',
       message.isModal || false
     )
-      .then((result) => sendResponse({ result }))
+      .then((result) => {
+        if (result) {
+          sendResponse({ result });
+        } else {
+          sendResponse({ cancelled: true });
+        }
+      })
       .catch((err) => {
-        console.warn('[Offscreen] Task ended:', err.message);
-        sendResponse({ error: err.message });
+        sendResponse({ error: String(err?.message || err) });
       });
     return true; // async response
   } else if (message.type === 'CANCEL_BACKGROUND_ANALYSIS') {

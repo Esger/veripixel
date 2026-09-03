@@ -123,6 +123,18 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
             if (response && response.result) {
               await setCachedResult(imageUrl, response.result);
               sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: response.result });
+            } else if (response && response.cancelled) {
+              sendResponse({
+                type: 'IMAGE_ANALYSIS_RESULT',
+                result: {
+                  imageUrl,
+                  status: 'pending',
+                  aiScore: 0,
+                  patchScores: [],
+                  metadata: { exifPresent: false, c2paPresent: false, qualityScore: 0 },
+                  timestamp: Date.now()
+                }
+              });
             } else {
               sendResponse({
                 type: 'IMAGE_ANALYSIS_RESULT',
