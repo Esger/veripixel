@@ -366,7 +366,7 @@ export function checkPageModalState(onModalClosed?: () => void): void {
   const activeModals = getActiveModalElements();
   const isModalOpen = activeModals.length > 0;
 
-  // When a modal opens: cancel background calculations and suspend unfinished loading cards
+  // When a modal opens: cancel background calculations to prioritize newly added modal images
   if (isModalOpen && !prevModalOpen) {
     try {
       if (chrome?.runtime?.sendMessage) {
@@ -375,19 +375,8 @@ export function checkPageModalState(onModalClosed?: () => void): void {
         });
       }
     } catch (e) {}
-
-    for (const [targetEl, entry] of badgeRegistry.entries()) {
-      if (!isElementInsideActiveModal(targetEl, activeModals)) {
-        hideRegionsForEntry(entry);
-        if (targetEl.dataset.aiDetectorBadgeInjected === 'loading') {
-          delete targetEl.dataset.aiDetectorProcessed;
-          delete targetEl.dataset.aiDetectorBadgeInjected;
-          removeBadge(targetEl);
-        }
-      }
-    }
   } else if (!isModalOpen && prevModalOpen) {
-    // When modal closes: notify to resume calculations on visible background images
+    // When modal closes: notify scanner to resume scanning visible background images
     if (onModalClosed) {
       onModalClosed();
     }
@@ -395,57 +384,18 @@ export function checkPageModalState(onModalClosed?: () => void): void {
 
   prevModalOpen = isModalOpen;
 
-  for (const [targetEl, entry] of badgeRegistry.entries()) {
+  for (const [targetEl] of badgeRegistry.entries()) {
     if (!targetEl.isConnected) {
       removeBadge(targetEl);
       continue;
     }
-
-    const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
-
-    if (isModalOpen && !isInsideModal) {
-      // Hide background badges & tooltips & regions
-      hideRegionsForEntry(entry);
-      try {
-        if (entry.badgeEl.matches(':popover-open')) {
-          entry.badgeEl.hidePopover();
-        }
-      } catch (e) {}
-      entry.badgeEl.style.display = 'none';
-
-      try {
-        if (entry.tooltipEl.matches(':popover-open')) {
-          entry.tooltipEl.hidePopover();
-        }
-      } catch (e) {}
-      entry.tooltipEl.style.display = 'none';
-    } else {
-      // Element is inside the active modal (or no modal is open): keep/restore badge open!
-      entry.badgeEl.style.display = '';
-      updateBadgePosition(targetEl);
-    }
+    updateBadgePosition(targetEl);
   }
 }
 
 export function updateBadgePosition(targetEl: HTMLElement): void {
   const entry = badgeRegistry.get(targetEl);
   if (!entry) return;
-
-  const activeModals = getActiveModalElements();
-  const isModalOpen = activeModals.length > 0;
-  const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
-
-  // If a modal is open and this element is OUTSIDE it, hide it
-  if (isModalOpen && !isInsideModal) {
-    hideRegionsForEntry(entry);
-    if (entry.badgeEl.matches(':popover-open')) {
-      try {
-        entry.badgeEl.hidePopover();
-      } catch (e) {}
-    }
-    entry.badgeEl.style.display = 'none';
-    return;
-  }
 
   entry.badgeEl.style.display = '';
 
@@ -567,20 +517,12 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 
   badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName, regionEls: [] });
 
-  const activeModals = getActiveModalElements();
-  const isModalOpen = activeModals.length > 0;
-  const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
-
-  if (isModalOpen && !isInsideModal) {
-    badgeEl.style.display = 'none';
-  } else {
-    try {
-      badgeEl.showPopover();
-    } catch (e) {
-      console.warn('[Overlay] showPopover failed:', e);
-    }
-    updateBadgePosition(targetEl);
+  try {
+    badgeEl.showPopover();
+  } catch (e) {
+    console.warn('[Overlay] showPopover failed:', e);
   }
+  updateBadgePosition(targetEl);
 }
 
 export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
@@ -596,17 +538,10 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   const { badgeEl, tooltipEl } = entry;
   entry.patches = result.patchScores;
 
-  const activeModals = getActiveModalElements();
-  const isModalOpen = activeModals.length > 0;
-  const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
-
-  // Ensure badge popover is open if in modal or no modal is active
-  if (!isModalOpen || isInsideModal) {
-    if (!badgeEl.matches(':popover-open')) {
-      try {
-        badgeEl.showPopover();
-      } catch (e) {}
-    }
+  if (!badgeEl.matches(':popover-open')) {
+    try {
+      badgeEl.showPopover();
+    } catch (e) {}
   }
 
   const scorePercent = Math.round(result.aiScore * 100);
