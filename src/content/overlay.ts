@@ -1,9 +1,11 @@
-import { AnalysisResult } from '../shared/types';
+import { AnalysisResult, PatchResult } from '../shared/types';
 
 interface BadgeEntry {
   badgeEl: HTMLElement;
   tooltipEl: HTMLElement;
   anchorName: string;
+  regionEls: HTMLElement[];
+  patches?: PatchResult[];
 }
 
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
@@ -127,6 +129,81 @@ function ensureGlobalStyles(): void {
       border-radius: 4px;
       font-size: 10px;
       text-align: center;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.15s ease;
+    }
+
+    .detectorTooltip__patchItem:hover {
+      background: #334155;
+      transform: translateY(-1px);
+    }
+
+    /* Sampled Region Outlines */
+    .detectorRegion {
+      position: fixed;
+      position-anchor: var(--badge-anchor);
+      inset: auto;
+      top: var(--fb-top, calc(anchor(top) + anchor-size(height) * var(--patch-y, 0)));
+      left: var(--fb-left, calc(anchor(left) + anchor-size(width) * var(--patch-x, 0)));
+      width: var(--fb-width, calc(anchor-size(width) * var(--patch-w, 1)));
+      height: var(--fb-height, calc(anchor-size(height) * var(--patch-h, 1)));
+      position-visibility: anchors-visible;
+      pointer-events: none;
+      border-radius: 6px;
+      border: 2px dashed #10B981;
+      background: rgba(16, 185, 129, 0.12);
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      z-index: 2147483642;
+      transition: opacity 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .detectorRegion--highAi {
+      border-color: #EF4444;
+      background: rgba(239, 68, 68, 0.15);
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
+      color: #EF4444;
+    }
+
+    .detectorRegion--mediumAi {
+      border-color: #F59E0B;
+      background: rgba(245, 158, 11, 0.15);
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+      color: #F59E0B;
+    }
+
+    .detectorRegion--lowAi {
+      border-color: #10B981;
+      background: rgba(16, 185, 129, 0.12);
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
+      color: #10B981;
+    }
+
+    .detectorRegion--highlighted {
+      border-width: 3px;
+      border-style: solid;
+      box-shadow: 0 0 20px currentColor;
+      transform: scale(1.02);
+      z-index: 2147483645;
+    }
+
+    .detectorRegion__label {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #FFFFFF;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      backdrop-filter: blur(4px);
+      user-select: none;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
     }
   `;
 
@@ -149,13 +226,13 @@ export function getActiveModalElements(): HTMLElement[] {
   // 1. Native <dialog open> (excluding our own elements)
   const openDialogs = document.querySelectorAll<HTMLDialogElement>('dialog[open]');
   for (const dialog of openDialogs) {
-    if (!dialog.classList.contains('detectorBadge') && !dialog.classList.contains('detectorTooltip')) {
+    if (!dialog.classList.contains('detectorBadge') && !dialog.classList.contains('detectorTooltip') && !dialog.classList.contains('detectorRegion')) {
       activeModals.push(dialog);
     }
   }
 
   // 2. Open popovers on page (excluding our own elements)
-  const popovers = document.querySelectorAll<HTMLElement>('[popover]:not(.detectorBadge):not(.detectorTooltip)');
+  const popovers = document.querySelectorAll<HTMLElement>('[popover]:not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)');
   for (const popover of popovers) {
     try {
       if (popover.matches(':popover-open')) {
@@ -174,9 +251,9 @@ export function getActiveModalElements(): HTMLElement[] {
 
   // 4. Fixed or absolute elements with class containing modal, dialog, or lightbox
   const modalCandidates = document.querySelectorAll<HTMLElement>(
-    '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip), ' +
-    '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip), ' +
-    '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip)'
+    '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
+    '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
+    '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)'
   );
 
   for (const candidate of modalCandidates) {
@@ -203,6 +280,44 @@ export function isElementInsideActiveModal(el: HTMLElement, activeModals: HTMLEl
   return false;
 }
 
+function showRegionsForEntry(entry: BadgeEntry, targetEl: HTMLElement): void {
+  updateRegionPositions(targetEl, entry);
+  entry.regionEls.forEach((regionEl) => {
+    try {
+      if (!regionEl.matches(':popover-open')) {
+        regionEl.showPopover();
+      }
+    } catch (e) {}
+  });
+}
+
+function hideRegionsForEntry(entry: BadgeEntry): void {
+  entry.regionEls.forEach((regionEl) => {
+    try {
+      if (regionEl.matches(':popover-open')) {
+        regionEl.hidePopover();
+      }
+    } catch (e) {}
+  });
+}
+
+function updateRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
+  const rect = targetEl.getBoundingClientRect();
+  entry.regionEls.forEach((regionEl, idx) => {
+    const patch = entry.patches?.[idx];
+    const box = patch?.box || { x: 0, y: 0, width: 1, height: 1 };
+    regionEl.style.setProperty('--patch-x', `${box.x}`);
+    regionEl.style.setProperty('--patch-y', `${box.y}`);
+    regionEl.style.setProperty('--patch-w', `${box.width}`);
+    regionEl.style.setProperty('--patch-h', `${box.height}`);
+
+    regionEl.style.setProperty('--fb-top', `${rect.top + rect.height * box.y}px`);
+    regionEl.style.setProperty('--fb-left', `${rect.left + rect.width * box.x}px`);
+    regionEl.style.setProperty('--fb-width', `${rect.width * box.width}px`);
+    regionEl.style.setProperty('--fb-height', `${rect.height * box.height}px`);
+  });
+}
+
 export function checkPageModalState(onModalClosed?: () => void): void {
   const activeModals = getActiveModalElements();
   const isModalOpen = activeModals.length > 0;
@@ -217,8 +332,9 @@ export function checkPageModalState(onModalClosed?: () => void): void {
       }
     } catch (e) {}
 
-    for (const [targetEl] of badgeRegistry.entries()) {
+    for (const [targetEl, entry] of badgeRegistry.entries()) {
       if (!isElementInsideActiveModal(targetEl, activeModals)) {
+        hideRegionsForEntry(entry);
         if (targetEl.dataset.aiDetectorBadgeInjected === 'loading') {
           delete targetEl.dataset.aiDetectorProcessed;
           delete targetEl.dataset.aiDetectorBadgeInjected;
@@ -244,7 +360,8 @@ export function checkPageModalState(onModalClosed?: () => void): void {
     const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
 
     if (isModalOpen && !isInsideModal) {
-      // Hide background badges
+      // Hide background badges & tooltips & regions
+      hideRegionsForEntry(entry);
       try {
         if (entry.badgeEl.matches(':popover-open')) {
           entry.badgeEl.hidePopover();
@@ -276,6 +393,7 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
 
   // If a modal is open and this element is OUTSIDE it, hide it
   if (isModalOpen && !isInsideModal) {
+    hideRegionsForEntry(entry);
     if (entry.badgeEl.matches(':popover-open')) {
       try {
         entry.badgeEl.hidePopover();
@@ -295,6 +413,7 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
 
   // Only hide popovers if the element is explicitly hidden or has 0 dimensions
   if (!hasDimensions || isDisplayNone) {
+    hideRegionsForEntry(entry);
     if (entry.badgeEl.matches(':popover-open')) {
       try {
         entry.badgeEl.hidePopover();
@@ -313,6 +432,11 @@ export function updateBadgePosition(targetEl: HTMLElement): void {
     try {
       entry.badgeEl.showPopover();
     } catch (e) {}
+  }
+
+  // Update region positions if tooltip popover is currently active
+  if (entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open')) {
+    updateRegionPositions(targetEl, entry);
   }
 
   // JS coordinate fallback if browser does not yet support CSS Anchor Positioning
@@ -386,10 +510,13 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   badgeEl.addEventListener('click', (e) => {
     preventAndStop(e);
 
+    const currentEntry = badgeRegistry.get(targetEl);
     if (tooltipEl.matches && tooltipEl.matches(':popover-open')) {
       tooltipEl.hidePopover();
+      if (currentEntry) hideRegionsForEntry(currentEntry);
     } else if (typeof tooltipEl.showPopover === 'function') {
       tooltipEl.showPopover();
+      if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
     }
   });
 
@@ -398,6 +525,8 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
     if (tooltipEl.matches && tooltipEl.matches(':popover-open')) {
       if (!tooltipEl.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
         tooltipEl.hidePopover();
+        const currentEntry = badgeRegistry.get(targetEl);
+        if (currentEntry) hideRegionsForEntry(currentEntry);
       }
     }
   });
@@ -405,14 +534,12 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   document.body.appendChild(badgeEl);
   document.body.appendChild(tooltipEl);
 
-  badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName });
+  badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName, regionEls: [] });
 
   const activeModals = getActiveModalElements();
   const isModalOpen = activeModals.length > 0;
   const isInsideModal = isModalOpen && isElementInsideActiveModal(targetEl, activeModals);
 
-  // If a modal is open and this element is NOT in it, hide it.
-  // If it IS in the modal (or no modal is open), open it immediately!
   if (isModalOpen && !isInsideModal) {
     badgeEl.style.display = 'none';
   } else {
@@ -440,6 +567,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   if (!entry) return;
 
   const { badgeEl, tooltipEl } = entry;
+  entry.patches = result.patchScores;
 
   const activeModals = getActiveModalElements();
   const isModalOpen = activeModals.length > 0;
@@ -481,10 +609,46 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     scoreText.textContent = `${scorePercent}%`;
   }
 
+  // Create region outline popover elements for each sampled patch
+  hideRegionsForEntry(entry);
+  entry.regionEls.forEach((el) => el.remove());
+  entry.regionEls = [];
+
+  result.patchScores.forEach((patch) => {
+    const box = patch.box || { x: 0, y: 0, width: 1, height: 1 };
+    const patchScorePercent = Math.round(patch.aiScore * 100);
+
+    let modifierClass = 'detectorRegion--lowAi';
+    let regionColor = '#10B981';
+    if (patchScorePercent >= 70) {
+      modifierClass = 'detectorRegion--highAi';
+      regionColor = '#EF4444';
+    } else if (patchScorePercent >= 30) {
+      modifierClass = 'detectorRegion--mediumAi';
+      regionColor = '#F59E0B';
+    }
+
+    const regionEl = document.createElement('div');
+    regionEl.className = `detectorRegion ${modifierClass}`;
+    regionEl.setAttribute('popover', 'manual');
+    regionEl.style.setProperty('--badge-anchor', entry.anchorName);
+    regionEl.style.setProperty('position-anchor', entry.anchorName);
+    regionEl.style.setProperty('--patch-x', `${box.x}`);
+    regionEl.style.setProperty('--patch-y', `${box.y}`);
+    regionEl.style.setProperty('--patch-w', `${box.width}`);
+    regionEl.style.setProperty('--patch-h', `${box.height}`);
+
+    const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
+    regionEl.innerHTML = `<span class="detectorRegion__label" style="border-left: 3px solid ${regionColor}">${formattedPos} (${patchScorePercent}%)</span>`;
+
+    document.body.appendChild(regionEl);
+    entry.regionEls.push(regionEl);
+  });
+
   const patchesHtml = result.patchScores
     .map(
-      (p) =>
-        `<div class="detectorTooltip__patchItem">${p.position}: <strong style="color: ${
+      (p, idx) =>
+        `<div class="detectorTooltip__patchItem" data-patch-index="${idx}">${p.position}: <strong style="color: ${
           p.aiScore >= 0.7 ? '#EF4444' : '#10B981'
         }">${Math.round(p.aiScore * 100)}%</strong></div>`
     )
@@ -512,12 +676,29 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     </div>
   `;
 
+  // Attach hover highlight listeners to patch items in tooltip
+  tooltipEl.querySelectorAll<HTMLElement>('.detectorTooltip__patchItem').forEach((item) => {
+    const idx = parseInt(item.dataset.patchIndex || '-1', 10);
+    if (idx >= 0 && entry.regionEls[idx]) {
+      item.addEventListener('mouseenter', () => {
+        entry.regionEls[idx].classList.add('detectorRegion--highlighted');
+      });
+      item.addEventListener('mouseleave', () => {
+        entry.regionEls[idx].classList.remove('detectorRegion--highlighted');
+      });
+    }
+  });
+
   updateBadgePosition(targetEl);
 }
 
 export function removeBadge(targetEl: HTMLElement): void {
   const entry = badgeRegistry.get(targetEl);
   if (entry) {
+    hideRegionsForEntry(entry);
+    entry.regionEls.forEach((el) => el.remove());
+    entry.regionEls = [];
+
     try {
       if (entry.badgeEl.matches(':popover-open')) {
         entry.badgeEl.hidePopover();

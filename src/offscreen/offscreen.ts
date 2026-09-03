@@ -135,7 +135,8 @@ async function processImageBuffer(
         patchScores.push({
           patchIndex: patch.patchIndex,
           position: patch.position,
-          aiScore
+          aiScore,
+          box: patch.box
         });
       }
 

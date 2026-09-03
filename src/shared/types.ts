@@ -1,9 +1,17 @@
 export type ImageAnalysisStatus = 'pending' | 'analyzing' | 'complete' | 'error';
 
+export interface PatchBox {
+  x: number; // 0.0 - 1.0 (relative to image width)
+  y: number; // 0.0 - 1.0 (relative to image height)
+  width: number; // 0.0 - 1.0 (relative to image width)
+  height: number; // 0.0 - 1.0 (relative to image height)
+}
+
 export interface PatchResult {
   patchIndex: number;
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
   aiScore: number;
+  box?: PatchBox;
 }
 
 export interface MetadataResult {
