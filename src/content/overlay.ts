@@ -4,6 +4,8 @@ interface BadgeEntry {
   badgeEl: HTMLElement;
   tooltipEl: HTMLElement;
   anchorName: string;
+  regionsWrapperEl?: HTMLElement;
+  regionsContainerEl?: HTMLElement;
   regionEls: HTMLElement[];
   patches?: PatchResult[];
   result?: AnalysisResult;
@@ -288,17 +290,62 @@ function ensureGlobalStyles(): void {
       cursor: wait;
     }
 
-    /* Native CSS Anchor Positioned Region Outlines - Guaranteed 1:1 Square */
-    .detectorRegion {
+    /* Wrapper matches the target element bounds and clips any overflow */
+    .detectorRegionsWrapper {
       position: fixed;
       position-anchor: var(--badge-anchor);
       inset: auto;
-      top: calc(anchor(top) + var(--region-top, 0px));
-      left: calc(anchor(left) + var(--region-left, 0px));
-      width: var(--region-size, 60px);
-      height: var(--region-size, 60px);
-      aspect-ratio: 1 / 1;
+      top: anchor(top);
+      left: anchor(left);
+      width: anchor-size(width);
+      height: anchor-size(height);
       position-visibility: anchors-visible;
+      pointer-events: none;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+      z-index: 2147483642;
+      box-sizing: border-box;
+      border-radius: inherit;
+    }
+
+    /* Container mimics the real unclipped image size and position */
+    .detectorRegions {
+      position: absolute;
+      top: var(--image-offset-y, 0px);
+      left: var(--image-offset-x, 0px);
+      width: var(--image-width, 100%);
+      height: var(--image-height, 100%);
+      pointer-events: none;
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+      box-sizing: border-box;
+    }
+
+    /* Standard Rule of Thirds 3x3 layout */
+    .detectorRegions--standard {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
+    }
+
+    /* Deep grid layout (3x3, 3x2, 2x3, etc.) */
+    .detectorRegions--grid {
+      display: grid;
+      grid-template-columns: repeat(var(--grid-cols, 3), 1fr);
+      grid-template-rows: repeat(var(--grid-rows, 3), 1fr);
+    }
+
+    /* Individual Region Outlines - Guaranteed 1:1 Square */
+    .detectorRegion {
+      position: relative;
+      width: var(--region-size, 80px);
+      height: var(--region-size, 80px);
+      aspect-ratio: 1 / 1;
       pointer-events: none;
       border-radius: 6px;
       border: 2px dashed #10B981;
@@ -307,7 +354,6 @@ function ensureGlobalStyles(): void {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
-      z-index: 2147483642;
       transition: opacity 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
     }
 
@@ -336,8 +382,8 @@ function ensureGlobalStyles(): void {
       border-width: 3px;
       border-style: solid;
       box-shadow: 0 0 20px currentColor;
-      transform: scale(1.02);
-      z-index: 2147483645;
+      transform: scale(1.04);
+      z-index: 10;
     }
 
     .detectorRegion__label {
@@ -372,117 +418,112 @@ function isElementVisible(el: HTMLElement): boolean {
 }
 
 /**
- * Calculates the exact rendered pixel geometry of the photo,
- * supporting object-fit: cover, object-fit: contain, and standard scaling.
+ * Calculates the real unclipped rendered geometry (size and offset) of the image,
+ * taking into account object-fit (cover, contain, fill).
  */
-function getDisplayedImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageHeight?: number) {
+function getRealImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageHeight?: number) {
   const rect = targetEl.getBoundingClientRect();
-  const naturalW = (targetEl instanceof HTMLImageElement ? targetEl.naturalWidth : 0) || imageWidth || rect.width;
-  const naturalH = (targetEl instanceof HTMLImageElement ? targetEl.naturalHeight : 0) || imageHeight || rect.height;
+  const elW = rect.width;
+  const elH = rect.height;
 
-  if (naturalW <= 0 || naturalH <= 0 || rect.width <= 0 || rect.height <= 0) {
-    return {
-      offsetX: 0,
-      offsetY: 0,
-      scale: 1,
-      naturalW: rect.width,
-      naturalH: rect.height,
-      clipWidth: rect.width,
-      clipHeight: rect.height
-    };
+  if (elW <= 0 || elH <= 0) {
+    return { elW, elH, displayW: elW, displayH: elH, offsetX: 0, offsetY: 0 };
   }
+
+  const naturalW = (targetEl instanceof HTMLImageElement ? targetEl.naturalWidth : 0) || imageWidth || elW;
+  const naturalH = (targetEl instanceof HTMLImageElement ? targetEl.naturalHeight : 0) || imageHeight || elH;
 
   const computedStyle = window.getComputedStyle(targetEl);
   const objectFit = computedStyle.objectFit;
 
-  const elW = rect.width;
-  const elH = rect.height;
-  const elRatio = elW / elH;
-  const imgRatio = naturalW / naturalH;
-
-  let scale = 1;
+  let displayW = elW;
+  let displayH = elH;
   let offsetX = 0;
   let offsetY = 0;
 
-  if (objectFit === 'cover') {
-    // cover: image fills the entire element container; overflow is clipped
-    if (imgRatio > elRatio) {
-      // Image is wider than container: height matches container, width overflows horizontally
-      scale = elH / naturalH;
-      const displayW = naturalW * scale;
-      offsetX = (elW - displayW) / 2; // negative offset (centered horizontally)
-      offsetY = 0;
-    } else {
-      // Image is taller than container: width matches container, height overflows vertically
-      scale = elW / naturalW;
-      const displayH = naturalH * scale;
-      offsetX = 0;
-      offsetY = (elH - displayH) / 2; // negative offset (centered vertically)
+  if (naturalW > 0 && naturalH > 0) {
+    const elRatio = elW / elH;
+    const imgRatio = naturalW / naturalH;
+
+    if (objectFit === 'cover') {
+      if (imgRatio > elRatio) {
+        // Image is wider: height matches container, width overflows
+        const scale = elH / naturalH;
+        displayW = naturalW * scale;
+        displayH = elH;
+        offsetX = (elW - displayW) / 2;
+        offsetY = 0;
+      } else {
+        // Image is taller: width matches container, height overflows
+        const scale = elW / naturalW;
+        displayW = elW;
+        displayH = naturalH * scale;
+        offsetX = 0;
+        offsetY = (elH - displayH) / 2;
+      }
+    } else if (objectFit === 'contain') {
+      if (imgRatio > elRatio) {
+        // Letterbox top and bottom
+        const scale = elW / naturalW;
+        displayW = elW;
+        displayH = naturalH * scale;
+        offsetX = 0;
+        offsetY = (elH - displayH) / 2;
+      } else {
+        // Pillarbox left and right
+        const scale = elH / naturalH;
+        displayW = naturalW * scale;
+        displayH = elH;
+        offsetX = (elW - displayW) / 2;
+        offsetY = 0;
+      }
     }
-  } else if (objectFit === 'contain') {
-    // contain: image fits entirely inside container; letterbox or pillarbox
-    if (imgRatio > elRatio) {
-      // Letterbox top and bottom
-      scale = elW / naturalW;
-      const displayH = naturalH * scale;
-      offsetX = 0;
-      offsetY = (elH - displayH) / 2;
-    } else {
-      // Pillarbox left and right
-      scale = elH / naturalH;
-      const displayW = naturalW * scale;
-      offsetX = (elW - displayW) / 2;
-      offsetY = 0;
-    }
-  } else {
-    // fill or default:
-    scale = elW / naturalW;
-    offsetX = 0;
-    offsetY = 0;
   }
 
-  return {
-    offsetX,
-    offsetY,
-    scale,
-    naturalW,
-    naturalH,
-    clipWidth: elW,
-    clipHeight: elH
-  };
+  return { elW, elH, displayW, displayH, offsetX, offsetY };
 }
 
 /**
- * Applies exact pixel coordinates to region elements, ensuring they are 100% square
- * and clamped strictly within the visible image boundary.
+ * Positions the wrapper over the target element, sizes the inner container
+ * to mimic the real image size and offset, and lets CSS Grid handle all sample layout.
  */
 function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
-  if (!entry.patches || entry.regionEls.length === 0) return;
-  const geo = getDisplayedImageGeometry(targetEl, entry.result?.imageWidth, entry.result?.imageHeight);
+  if (!entry.regionsWrapperEl || !entry.regionsContainerEl) return;
 
-  // Exact scale of 224px sample on screen
-  const squareSize = Math.max(20, Math.round(224 * geo.scale));
+  const geo = getRealImageGeometry(targetEl, entry.result?.imageWidth, entry.result?.imageHeight);
+  if (geo.elW <= 0 || geo.elH <= 0) return;
 
-  entry.regionEls.forEach((regionEl, idx) => {
-    const patch = entry.patches?.[idx];
-    if (!patch) return;
-    const box = patch.box || { x: 0, y: 0, width: 1, height: 1 };
+  // 1. Position the wrapper directly over the target element
+  entry.regionsWrapperEl.style.top = 'anchor(top)';
+  entry.regionsWrapperEl.style.left = 'anchor(left)';
+  entry.regionsWrapperEl.style.width = 'anchor-size(width)';
+  entry.regionsWrapperEl.style.height = 'anchor-size(height)';
 
-    // Compute pixel position relative to container
-    const sx = box.x * geo.naturalW;
-    const sy = box.y * geo.naturalH;
+  // 2. Size the inner container to mimic the real image size and offset
+  entry.regionsContainerEl.style.setProperty('--image-offset-x', `${Math.round(geo.offsetX)}px`);
+  entry.regionsContainerEl.style.setProperty('--image-offset-y', `${Math.round(geo.offsetY)}px`);
+  entry.regionsContainerEl.style.setProperty('--image-width', `${Math.round(geo.displayW)}px`);
+  entry.regionsContainerEl.style.setProperty('--image-height', `${Math.round(geo.displayH)}px`);
 
-    let pixelLeft = Math.round(geo.offsetX + sx * geo.scale);
-    let pixelTop = Math.round(geo.offsetY + sy * geo.scale);
+  // 3. Proportional sample square size (25% of min dimension, between 36px and 160px)
+  const minDim = Math.min(geo.displayW, geo.displayH);
+  const isDeep = entry.result?.sampleMode === 'deep';
+  const ratio = isDeep ? 0.22 : 0.25;
+  const squareSize = Math.max(36, Math.min(Math.round(minDim * ratio), 160));
+  entry.regionsContainerEl.style.setProperty('--region-size', `${squareSize}px`);
 
-    // Clamp strictly within the visible target element boundary (never spill outside)
-    pixelLeft = Math.max(0, Math.min(Math.round(geo.clipWidth - squareSize), pixelLeft));
-    pixelTop = Math.max(0, Math.min(Math.round(geo.clipHeight - squareSize), pixelTop));
-
-    regionEl.style.setProperty('--region-left', `${pixelLeft}px`);
-    regionEl.style.setProperty('--region-top', `${pixelTop}px`);
-    regionEl.style.setProperty('--region-size', `${squareSize}px`);
-  });
+  // 4. Read the needed values from the rendered grid items so we have exact geometry
+  if (entry.regionsWrapperEl.matches(':popover-open')) {
+    const wrapperRect = entry.regionsWrapperEl.getBoundingClientRect();
+    entry.regionEls.forEach((regionEl) => {
+      const rRect = regionEl.getBoundingClientRect();
+      const relX = rRect.left - wrapperRect.left;
+      const relY = rRect.top - wrapperRect.top;
+      regionEl.dataset.renderedX = String(Math.round(relX));
+      regionEl.dataset.renderedY = String(Math.round(relY));
+      regionEl.dataset.renderedSize = String(Math.round(rRect.width));
+    });
+  }
 }
 
 export function getActiveModalElements(): HTMLElement[] {
@@ -494,7 +535,9 @@ export function getActiveModalElements(): HTMLElement[] {
     if (
       !dialog.classList.contains('detectorBadge') &&
       !dialog.classList.contains('detectorTooltip') &&
-      !dialog.classList.contains('detectorRegion')
+      !dialog.classList.contains('detectorRegion') &&
+      !dialog.classList.contains('detectorRegions') &&
+      !dialog.classList.contains('detectorRegionsWrapper')
     ) {
       activeModals.push(dialog);
     }
@@ -502,7 +545,7 @@ export function getActiveModalElements(): HTMLElement[] {
 
   // 2. Open popovers on page (excluding our own elements)
   const popovers = document.querySelectorAll<HTMLElement>(
-    '[popover]:not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)'
+    '[popover]:not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper)'
   );
   for (const popover of popovers) {
     try {
@@ -522,9 +565,9 @@ export function getActiveModalElements(): HTMLElement[] {
 
   // 4. Fixed or absolute elements with class containing modal, dialog, or lightbox
   const modalCandidates = document.querySelectorAll<HTMLElement>(
-    '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
-      '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion), ' +
-      '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion)'
+    '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper), ' +
+      '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper), ' +
+      '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper)'
   );
 
   for (const candidate of modalCandidates) {
@@ -551,24 +594,27 @@ export function isElementInsideActiveModal(el: HTMLElement, activeModals: HTMLEl
   return false;
 }
 
-function showRegionsForEntry(entry: BadgeEntry): void {
-  entry.regionEls.forEach((regionEl) => {
+function showRegionsForEntry(entry: BadgeEntry, targetEl?: HTMLElement): void {
+  if (entry.regionsWrapperEl) {
     try {
-      if (!regionEl.matches(':popover-open')) {
-        regionEl.showPopover();
+      if (!entry.regionsWrapperEl.matches(':popover-open')) {
+        entry.regionsWrapperEl.showPopover();
       }
     } catch (e) {}
-  });
+    if (targetEl) {
+      applyRegionPositions(targetEl, entry);
+    }
+  }
 }
 
 function hideRegionsForEntry(entry: BadgeEntry): void {
-  entry.regionEls.forEach((regionEl) => {
+  if (entry.regionsWrapperEl) {
     try {
-      if (regionEl.matches(':popover-open')) {
-        regionEl.hidePopover();
+      if (entry.regionsWrapperEl.matches(':popover-open')) {
+        entry.regionsWrapperEl.hidePopover();
       }
     } catch (e) {}
-  });
+  }
 }
 
 export function checkPageModalState(onModalClosed?: () => void): void {
@@ -707,7 +753,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
       if (currentEntry) hideRegionsForEntry(currentEntry);
     } else if (typeof tooltipEl.showPopover === 'function') {
       // Open region markers first so they enter the top layer underneath
-      if (currentEntry) showRegionsForEntry(currentEntry);
+      if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
       // Open tooltip popover second so it appears on top of the region markers
       tooltipEl.showPopover();
     }
@@ -784,12 +830,45 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     scoreText.textContent = `${scorePercent}%`;
   }
 
-  // Create native anchor-positioned region outline popovers
+  // Create or retrieve native anchor-positioned regions wrapper & container
   hideRegionsForEntry(entry);
-  entry.regionEls.forEach((el) => el.remove());
+  if (!entry.regionsWrapperEl) {
+    const regionsWrapperEl = document.createElement('div');
+    regionsWrapperEl.className = 'detectorRegionsWrapper';
+    regionsWrapperEl.setAttribute('popover', 'manual');
+    regionsWrapperEl.style.setProperty('--badge-anchor', entry.anchorName);
+    regionsWrapperEl.style.setProperty('position-anchor', entry.anchorName);
+
+    const regionsContainerEl = document.createElement('div');
+    regionsContainerEl.className = 'detectorRegions';
+    regionsWrapperEl.appendChild(regionsContainerEl);
+
+    document.body.appendChild(regionsWrapperEl);
+    entry.regionsWrapperEl = regionsWrapperEl;
+    entry.regionsContainerEl = regionsContainerEl;
+  }
+
+  const containerEl = entry.regionsContainerEl!;
+
+  // Clear existing region elements
+  containerEl.innerHTML = '';
   entry.regionEls = [];
 
-  result.patchScores.forEach((patch) => {
+  const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
+  const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
+  const isDeepActive = result.sampleMode === 'deep';
+  const gridCols = currentGrid.cols;
+  const gridRows = currentGrid.rows;
+
+  if (isDeepActive || gridCols > 2 || gridRows > 2) {
+    containerEl.className = 'detectorRegions detectorRegions--grid';
+    containerEl.style.setProperty('--grid-cols', String(gridCols));
+    containerEl.style.setProperty('--grid-rows', String(gridRows));
+  } else {
+    containerEl.className = 'detectorRegions detectorRegions--standard';
+  }
+
+  result.patchScores.forEach((patch, idx) => {
     const patchScorePercent = Math.round(patch.aiScore * 100);
 
     let modifierClass = 'detectorRegion--lowAi';
@@ -804,24 +883,49 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 
     const regionEl = document.createElement('div');
     regionEl.className = `detectorRegion ${modifierClass}`;
-    regionEl.setAttribute('popover', 'manual');
-    regionEl.style.setProperty('--badge-anchor', entry.anchorName);
-    regionEl.style.setProperty('position-anchor', entry.anchorName);
+
+    // Place into the CSS Grid:
+    if (!isDeepActive && gridCols === 2 && gridRows === 2) {
+      // 4-sample Rule of Thirds: Centered directly on 1/3 and 2/3 raster lines
+      const pos = patch.position;
+      if (pos.includes('top') && pos.includes('left')) {
+        regionEl.style.gridColumn = '1 / 3';
+        regionEl.style.gridRow = '1 / 3';
+      } else if (pos.includes('top') && pos.includes('right')) {
+        regionEl.style.gridColumn = '2 / 4';
+        regionEl.style.gridRow = '1 / 3';
+      } else if (pos.includes('bottom') && pos.includes('left')) {
+        regionEl.style.gridColumn = '1 / 3';
+        regionEl.style.gridRow = '2 / 4';
+      } else if (pos.includes('bottom') && pos.includes('right')) {
+        regionEl.style.gridColumn = '2 / 4';
+        regionEl.style.gridRow = '2 / 4';
+      } else {
+        const colIdx = idx % 2;
+        const rowIdx = Math.floor(idx / 2);
+        regionEl.style.gridColumn = colIdx === 0 ? '1 / 3' : '2 / 4';
+        regionEl.style.gridRow = rowIdx === 0 ? '1 / 3' : '2 / 4';
+      }
+      regionEl.style.placeSelf = 'center';
+    } else {
+      // Deep grid or arbitrary grid
+      const colIdx = idx % gridCols;
+      const rowIdx = Math.floor(idx / gridCols);
+      regionEl.style.gridColumn = String(colIdx + 1);
+      regionEl.style.gridRow = String(rowIdx + 1);
+      regionEl.style.placeSelf = 'center';
+    }
 
     const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
     regionEl.innerHTML = `<span class="detectorRegion__label" style="border-left: 3px solid ${regionColor}">${formattedPos} (${patchScorePercent}%)</span>`;
 
-    document.body.appendChild(regionEl);
+    entry.regionsContainerEl!.appendChild(regionEl);
     entry.regionEls.push(regionEl);
   });
 
-  // Calculate and apply exact square dimensions on screen
+  // Calculate container geometry and read rendered values from the browser
   applyRegionPositions(targetEl, entry);
 
-  const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
-  const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
-  const isDeepActive = result.sampleMode === 'deep';
-  const gridCols = currentGrid.cols;
   const gridClass = `detectorTooltip__patchesGrid detectorTooltip__patchesGrid--${gridCols}Cols`;
 
   const patchesHtml = result.patchScores
@@ -963,7 +1067,9 @@ export function removeBadge(targetEl: HTMLElement): void {
   const entry = badgeRegistry.get(targetEl);
   if (entry) {
     hideRegionsForEntry(entry);
-    entry.regionEls.forEach((el) => el.remove());
+    if (entry.regionsWrapperEl) {
+      entry.regionsWrapperEl.remove();
+    }
     entry.regionEls = [];
 
     try {
