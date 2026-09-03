@@ -18,34 +18,6 @@ export interface ExtractionResult {
 }
 
 /**
- * Calculates start and end offsets for 2 crops along an axis centered on the 1/3 and 2/3 raster lines.
- * Strictly guarantees zero overlap.
- */
-function calculateTwoNonOverlappingOffsets(totalLength: number, targetSize: number): { start: number; end: number } {
-  const maxSlack = totalLength - 2 * targetSize;
-  if (maxSlack <= 0) {
-    return { start: 0, end: Math.max(0, totalLength - targetSize) };
-  }
-
-  const half = targetSize / 2;
-  // Centered directly on the 1/3 and 2/3 raster lines
-  const idealStart = Math.round(totalLength * (1 / 3) - half);
-  const idealEnd = Math.round(totalLength * (2 / 3) - half);
-
-  let start = Math.max(0, idealStart);
-  let end = Math.min(totalLength - targetSize, idealEnd);
-
-  // Guarantee strictly zero overlap
-  if (end < start + targetSize) {
-    const margin = Math.floor(maxSlack / 3);
-    start = margin;
-    end = totalLength - targetSize - margin;
-  }
-
-  return { start, end };
-}
-
-/**
  * Uses a real hidden browser Flexbox element with `justify-content: space-around`
  * to read layout offsets directly from the browser's layout engine without self-calculating.
  */
@@ -94,18 +66,9 @@ function getFlexboxSpaceAroundOffsets(totalLength: number, targetSize: number, c
 }
 
 /**
- * Calculates crop offsets along an axis for 1, 2, or 3 non-overlapping crops.
- * - For count = 2 (standard mode): centered on 1/3 and 2/3 raster lines.
- * - For count = 3 (3x3 mode): uses real browser Flexbox space-around.
+ * Calculates crop offsets along an axis using real browser Flexbox space-around for all counts.
  */
 function calculateAxisOffsets(totalLength: number, targetSize: number, count: number): number[] {
-  if (totalLength < targetSize || count <= 1) {
-    return [Math.max(0, Math.round((totalLength - targetSize) / 2))];
-  }
-  if (count === 2) {
-    const { start, end } = calculateTwoNonOverlappingOffsets(totalLength, targetSize);
-    return [start, end];
-  }
   return getFlexboxSpaceAroundOffsets(totalLength, targetSize, count);
 }
 
