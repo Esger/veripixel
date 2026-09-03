@@ -72,13 +72,55 @@ function ensureGlobalStyles(): void {
       color: #FFFFFF;
     }
 
+    /* CSS Anchor Positioning @position-try fallbacks to keep tooltip clear of sample regions */
+    @position-try --tooltip-below {
+      top: calc(anchor(bottom) + 8px);
+      bottom: auto;
+      right: calc(anchor(right) + 6px);
+      left: auto;
+    }
+
+    @position-try --tooltip-above {
+      top: auto;
+      bottom: calc(anchor(top) + 8px);
+      right: calc(anchor(right) + 6px);
+      left: auto;
+    }
+
+    @position-try --tooltip-left-of-image {
+      top: auto;
+      bottom: calc(anchor(bottom) + 6px);
+      right: calc(anchor(left) + 8px);
+      left: auto;
+    }
+
+    @position-try --tooltip-right-of-image {
+      top: auto;
+      bottom: calc(anchor(bottom) + 6px);
+      left: calc(anchor(right) + 8px);
+      right: auto;
+    }
+
+    @position-try --tooltip-inside-shifted-left {
+      top: auto;
+      bottom: calc(anchor(bottom) + 6px);
+      right: calc(anchor(right) + 240px);
+      left: auto;
+    }
+
     .detectorTooltip {
       position: fixed;
       position-anchor: var(--badge-anchor);
       inset: auto;
-      bottom: calc(anchor(bottom) + 36px);
+      /* Default preferred position: Outside below the image, clear of all sample regions */
+      top: calc(anchor(bottom) + 8px);
       right: calc(anchor(right) + 6px);
-      position-try-fallbacks: flip-block;
+      position-try-fallbacks:
+        --tooltip-above,
+        --tooltip-left-of-image,
+        --tooltip-right-of-image,
+        --tooltip-inside-shifted-left,
+        flip-block;
       position-visibility: anchors-visible;
       margin: 0;
       padding: 12px;
