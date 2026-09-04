@@ -2,6 +2,21 @@ import exifr from 'exifr';
 import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runPatchInference } from './model-runner';
+// Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
+// so that Chrome's extension manager does not collect them as extension errors.
+const originalConsoleError = console.error;
+console.error = (...args: any[]) => {
+  if (
+    typeof args[0] === 'string' &&
+    (args[0].includes('[W:onnxruntime:') ||
+      args[0].includes('[I:onnxruntime:') ||
+      args[0].includes('VerifyEachNodeIsAssignedToAnEp'))
+  ) {
+    console.warn(...args);
+    return;
+  }
+  originalConsoleError.apply(console, args);
+};
 
 console.log('[Offscreen] Document script active.');
 

@@ -3,6 +3,7 @@ import { canvasToTensor } from './tensor-utils';
 
 // Configure ONNX WASM path and safe multi-threading relative to extension root
 ort.env.wasm.wasmPaths = '/assets/';
+ort.env.logLevel = 'error';
 ort.env.wasm.numThreads =
   typeof SharedArrayBuffer !== 'undefined'
     ? Math.min(4, typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2)
@@ -164,7 +165,8 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
       console.log('[ModelRunner] Initializing ONNX InferenceSession with WebGPU / WASM...');
       const session = await ort.InferenceSession.create(modelBuffer, {
         executionProviders: ['webgpu', 'wasm'],
-        graphOptimizationLevel: 'all'
+        graphOptimizationLevel: 'all',
+        logSeverityLevel: 3 // Suppress warnings (0=verbose, 1=info, 2=warning, 3=error, 4=fatal)
       });
       console.log('[ModelRunner] ONNX InferenceSession successfully loaded.');
       return session;

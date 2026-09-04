@@ -69,9 +69,8 @@ function isValidTargetElement(el: HTMLElement): boolean {
   }
 
   // 1. Check rendered on-screen dimensions
-  const rect = el.getBoundingClientRect();
-  const renderedWidth = rect.width || el.offsetWidth || 0;
-  const renderedHeight = rect.height || el.offsetHeight || 0;
+  const renderedWidth = el.offsetWidth || el.clientWidth || (el.getBoundingClientRect ? el.getBoundingClientRect().width : 0) || 0;
+  const renderedHeight = el.offsetHeight || el.clientHeight || (el.getBoundingClientRect ? el.getBoundingClientRect().height : 0) || 0;
 
   // If BOTH sides are smaller than MIN_IMAGE_SIZE (224px), skip!
   // This eliminates small avatars, profile thumbnails, button icons, etc.
@@ -322,11 +321,16 @@ function scanDOM(): void {
   });
 }
 
+const scheduleIdleTask =
+  typeof requestIdleCallback !== 'undefined'
+    ? (cb: () => void) => requestIdleCallback(cb, { timeout: 400 })
+    : (cb: () => void) => setTimeout(cb, 60);
+
 let modalCheckScheduled = false;
 function scheduleModalStateCheck(): void {
   if (modalCheckScheduled) return;
   modalCheckScheduled = true;
-  requestAnimationFrame(() => {
+  scheduleIdleTask(() => {
     modalCheckScheduled = false;
     handleModalStateCheck();
   });
@@ -336,7 +340,7 @@ let scanScheduled = false;
 function scheduleScanDOM(): void {
   if (scanScheduled) return;
   scanScheduled = true;
-  requestAnimationFrame(() => {
+  scheduleIdleTask(() => {
     scanScheduled = false;
     scanDOM();
   });
@@ -349,8 +353,8 @@ function handleModalStateCheck(): void {
   });
 }
 
-// Initial DOM Scan
-scanDOM();
+// Initial DOM Scan deferred to browser idle time
+scheduleScanDOM();
 scheduleModalStateCheck();
 
 // MutationObserver for dynamically added nodes AND src/srcset/style/class attribute changes (modals)
