@@ -98,25 +98,29 @@ function isValidTargetElement(el: HTMLElement): boolean {
   return true;
 }
 
-async function extractImageBufferFromElement(el: HTMLElement): Promise<{ buffer: number[]; contentType: string } | null> {
+async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
   try {
     if (el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      // Limit to 1600px max dimension to prevent excessive memory and layout stalls on huge photos
+      const maxDim = 1600;
+      let w = el.naturalWidth;
+      let h = el.naturalHeight;
+      if (w > maxDim || h > maxDim) {
+        const scale = maxDim / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = el.naturalWidth;
-      canvas.height = el.naturalHeight;
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      ctx.drawImage(el, 0, 0);
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
-      if (!blob) return null;
-      const arrayBuffer = await blob.arrayBuffer();
-      return {
-        buffer: Array.from(new Uint8Array(arrayBuffer)),
-        contentType: 'image/jpeg'
-      };
+      ctx.drawImage(el, 0, 0, w, h);
+      return canvas.toDataURL('image/jpeg', 0.92);
     }
   } catch (err) {
-    // Ignore cross-origin canvas security restrictions
+    // Ignore cross-origin tainted canvas restrictions
   }
   return null;
 }
@@ -160,9 +164,9 @@ async function processElement(el: HTMLElement): Promise<void> {
   const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
   const priority = isInsideModal ? 'high' : 'normal';
 
-  const sendBufferAnalysis = async () => {
-    const bufData = await extractImageBufferFromElement(el);
-    if (!bufData || !isExtensionContextValid()) {
+  const sendDataUrlAnalysis = async () => {
+    const dataUrl = await extractImageDataUrl(el);
+    if (!dataUrl || !isExtensionContextValid()) {
       removeBadge(el);
       return;
     }
@@ -170,10 +174,8 @@ async function processElement(el: HTMLElement): Promise<void> {
     try {
       chrome.runtime.sendMessage(
         {
-          type: 'ANALYZE_IMAGE_BUFFER',
-          imageUrl,
-          buffer: bufData.buffer,
-          contentType: bufData.contentType,
+          type: 'ANALYZE_IMAGE',
+          imageUrl: dataUrl,
           priority,
           isModal: isInsideModal
         } as ExtensionMessage,
@@ -198,9 +200,9 @@ async function processElement(el: HTMLElement): Promise<void> {
     }
   };
 
-  // If URL is file:// or blob://, offscreen cannot fetch it over network; directly send buffer
+  // If URL is file:// or blob://, offscreen cannot fetch it over network; directly send data URL
   if (imageUrl.startsWith('file:') || imageUrl.startsWith('blob:')) {
-    await sendBufferAnalysis();
+    await sendDataUrlAnalysis();
     return;
   }
 
@@ -227,11 +229,11 @@ async function processElement(el: HTMLElement): Promise<void> {
           if (response.result.status === 'complete') {
             injectImageBadge(el, response.result);
           } else if (response.result.status === 'error') {
-            // Attempt buffer extraction fallback in case of network/CORS failure
-            await sendBufferAnalysis();
+            // Attempt data URL extraction fallback in case of network/CORS failure
+            await sendDataUrlAnalysis();
           }
         } else {
-          await sendBufferAnalysis();
+          await sendDataUrlAnalysis();
         }
       }
     );
@@ -292,10 +294,13 @@ function observeElement(el: HTMLElement, immediateCheck = false): void {
   }
 }
 
+const TARGET_IMAGE_SELECTOR =
+  'img, picture source, [style*="background-image"], [style*="background:"], [role="img"], figure';
+
 function scanDOM(): void {
   if (!isExtensionContextValid()) return;
 
-  const elements = document.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span');
+  const elements = document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR);
   elements.forEach((el) => {
     const bg = el instanceof HTMLImageElement ? '' : window.getComputedStyle(el).backgroundImage;
     if (el instanceof HTMLImageElement || (bg && bg !== 'none')) {
@@ -317,17 +322,36 @@ function scanDOM(): void {
   });
 }
 
+let modalCheckScheduled = false;
+function scheduleModalStateCheck(): void {
+  if (modalCheckScheduled) return;
+  modalCheckScheduled = true;
+  requestAnimationFrame(() => {
+    modalCheckScheduled = false;
+    handleModalStateCheck();
+  });
+}
+
+let scanScheduled = false;
+function scheduleScanDOM(): void {
+  if (scanScheduled) return;
+  scanScheduled = true;
+  requestAnimationFrame(() => {
+    scanScheduled = false;
+    scanDOM();
+  });
+}
+
 function handleModalStateCheck(): void {
   checkPageModalState(() => {
     // When modal closes, resume scanning visible background images
-    setTimeout(() => scanDOM(), 50);
-    setTimeout(() => scanDOM(), 250);
+    scheduleScanDOM();
   });
 }
 
 // Initial DOM Scan
 scanDOM();
-handleModalStateCheck();
+scheduleModalStateCheck();
 
 // MutationObserver for dynamically added nodes AND src/srcset/style/class attribute changes (modals)
 const mutationObserver = new MutationObserver((mutations) => {
@@ -343,7 +367,7 @@ const mutationObserver = new MutationObserver((mutations) => {
               observeElement(node, true);
             }
           }
-          node.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span').forEach((child) => {
+          node.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR).forEach((child) => {
             const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
             if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
               if (isValidTargetElement(child)) {
@@ -357,7 +381,7 @@ const mutationObserver = new MutationObserver((mutations) => {
       mutation.removedNodes.forEach((node) => {
         if (node instanceof HTMLElement) {
           removeBadge(node);
-          node.querySelectorAll<HTMLElement>('img, [style*="background"], div, section, a, span').forEach((child) => {
+          node.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR).forEach((child) => {
             removeBadge(child);
           });
         }
@@ -375,7 +399,7 @@ const mutationObserver = new MutationObserver((mutations) => {
           }
         }
         // Deep scan when modal containers change class/style/open
-        target.querySelectorAll<HTMLElement>('img, [style*="background"]').forEach((child) => {
+        target.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR).forEach((child) => {
           const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
           if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
             if (isValidTargetElement(child)) {
@@ -389,8 +413,8 @@ const mutationObserver = new MutationObserver((mutations) => {
     }
   }
 
-  // Update modal state to hide/revert badges and dropdowns
-  handleModalStateCheck();
+  // Debounced modal state check to prevent layout thrashing
+  scheduleModalStateCheck();
 });
 
 mutationObserver.observe(document.body, {
@@ -411,7 +435,7 @@ document.addEventListener(
   (e) => {
     const target = e.target as HTMLElement;
     if (target && !target.classList.contains('detectorBadge') && !target.classList.contains('detectorTooltip')) {
-      handleModalStateCheck();
+      scheduleModalStateCheck();
     }
   },
   true
@@ -420,7 +444,7 @@ document.addEventListener(
 document.addEventListener(
   'close',
   () => {
-    handleModalStateCheck();
+    scheduleModalStateCheck();
   },
   true
 );
@@ -429,7 +453,7 @@ document.addEventListener(
   'keydown',
   (e) => {
     if (e.key === 'Escape') {
-      setTimeout(handleModalStateCheck, 50);
+      scheduleModalStateCheck();
     }
   },
   true
@@ -440,14 +464,8 @@ document.addEventListener(
   'click',
   () => {
     if (!isExtensionContextValid()) return;
-    setTimeout(() => {
-      handleModalStateCheck();
-      scanDOM();
-    }, 100);
-    setTimeout(() => {
-      handleModalStateCheck();
-      scanDOM();
-    }, 400);
+    scheduleModalStateCheck();
+    scheduleScanDOM();
   },
   { passive: true }
 );
@@ -456,8 +474,8 @@ document.addEventListener(
 document.addEventListener('visibilitychange', () => {
   if (!isExtensionContextValid()) return;
   if (document.visibilityState === 'visible') {
-    handleModalStateCheck();
-    scanDOM();
+    scheduleModalStateCheck();
+    scheduleScanDOM();
   }
 });
 

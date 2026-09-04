@@ -178,13 +178,15 @@ export function getActiveModalElements(): HTMLElement[] {
   );
 
   for (const candidate of modalCandidates) {
-    if (isElementVisible(candidate)) {
-      const style = window.getComputedStyle(candidate);
-      if (style.position === 'fixed' || style.position === 'absolute' || candidate.tagName === 'DIALOG') {
-        const rect = candidate.getBoundingClientRect();
-        if (rect.width > 120 && rect.height > 120 && !activeModals.includes(candidate)) {
-          activeModals.push(candidate);
-        }
+    if (!candidate.isConnected) continue;
+    const style = window.getComputedStyle(candidate);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+      continue;
+    }
+    if (style.position === 'fixed' || style.position === 'absolute' || candidate.tagName === 'DIALOG') {
+      const rect = candidate.getBoundingClientRect();
+      if (rect.width > 120 && rect.height > 120 && !activeModals.includes(candidate)) {
+        activeModals.push(candidate);
       }
     }
   }
