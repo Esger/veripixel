@@ -116,4 +116,15 @@ export type ExtensionMessage =
   | { type: 'TAB_STATS_RESULT'; stats: TabScanStats }
   | { type: 'TAB_STATS_UPDATED'; stats: TabScanStats }
   | { type: 'HIGHLIGHT_IMAGE_ON_PAGE'; imageUrl: string }
-  | { type: 'OFFSCREEN_READY' };
+  | { type: 'OFFSCREEN_READY' }
+  | { type: 'PING_OFFSCREEN' }
+  | {
+      type: 'ANALYZE_IMAGE_BUFFER';
+      imageUrl: string;
+      buffer: number[];
+      contentType: string;
+      priority?: 'high' | 'normal';
+      isModal?: boolean;
+      sampleMode?: 'standard' | 'deep';
+      forceRescan?: boolean;
+    };

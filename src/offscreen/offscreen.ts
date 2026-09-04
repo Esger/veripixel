@@ -270,9 +270,16 @@ async function processImageUrl(
 ): Promise<AnalysisResult | null> {
   return queue.run(
     async () => {
-      const response = await fetch(imageUrl);
-      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-      const blob = await response.blob();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
+      let blob: Blob;
+      try {
+        const response = await fetch(imageUrl, { signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        blob = await response.blob();
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
       const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
@@ -345,7 +352,10 @@ async function processImageUrl(
 
 // Listen for background service worker requests
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'PROCESS_IMAGE_URL') {
+  if (message.type === 'PING_OFFSCREEN') {
+    sendResponse({ status: 'pong' });
+    return false;
+  } else if (message.type === 'PROCESS_IMAGE_URL') {
     processImageUrl(
       message.imageUrl,
       message.priority || 'normal',
@@ -390,3 +400,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+// Announce readiness to background service worker
+try {
+  chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(() => {});
+} catch (e) {}
+

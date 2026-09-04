@@ -96,121 +96,127 @@ function getSampleLayoutFromDom(
   const count = cols * rows;
 
   if (typeof document !== 'undefined') {
-    const container = document.createElement('div');
-    container.style.cssText = `
-      position: absolute;
-      visibility: hidden;
-      pointer-events: none;
-      top: 0;
-      left: 0;
-      width: ${containerWidth}px;
-      height: ${containerHeight}px;
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    `;
+    try {
+      const container = document.createElement('div');
+      container.style.cssText = `
+        position: absolute;
+        visibility: hidden;
+        pointer-events: none;
+        overflow: hidden;
+        top: 0;
+        left: 0;
+        width: ${containerWidth}px;
+        height: ${containerHeight}px;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      `;
 
-    const boxes: HTMLElement[] = [];
+      const boxes: HTMLElement[] = [];
 
-    if (count === 1) {
-      // 1 box: grid lines 50%
-      container.style.display = 'grid';
-      container.style.gridTemplateColumns = '1fr';
-      container.style.gridTemplateRows = '1fr';
-      container.style.placeItems = 'center';
+      if (count === 1) {
+        // 1 box: grid lines 50%
+        container.style.display = 'grid';
+        container.style.gridTemplateColumns = '1fr';
+        container.style.gridTemplateRows = '1fr';
+        container.style.placeItems = 'center';
 
-      const box = document.createElement('div');
-      box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; box-sizing: border-box; place-self: center;`;
-      container.appendChild(box);
-      boxes.push(box);
-    } else if (count === 2) {
-      // 2 boxes: flex space-around / wrap
-      container.style.display = 'flex';
-      container.style.flexDirection = 'row';
-      container.style.flexWrap = 'wrap';
-      container.style.justifyContent = 'space-around';
-      container.style.alignItems = 'center';
-      container.style.alignContent = 'space-around';
-
-      for (let i = 0; i < 2; i++) {
         const box = document.createElement('div');
-        box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
+        box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; box-sizing: border-box; place-self: center;`;
         container.appendChild(box);
         boxes.push(box);
-      }
-    } else if (count === 4) {
-      // 4 boxes: grid-lines 1/3 (Rule of Thirds)
-      container.style.display = 'grid';
-      container.style.gridTemplateColumns = '1fr 1fr 1fr';
-      container.style.gridTemplateRows = '1fr 1fr 1fr';
+      } else if (count === 2) {
+        // 2 boxes: flex space-around / wrap
+        container.style.display = 'flex';
+        container.style.flexDirection = 'row';
+        container.style.flexWrap = 'wrap';
+        container.style.justifyContent = 'space-around';
+        container.style.alignItems = 'center';
+        container.style.alignContent = 'space-around';
 
-      const placements = [
-        { col: '1 / 3', row: '1 / 3' },
-        { col: '2 / 4', row: '1 / 3' },
-        { col: '1 / 3', row: '2 / 4' },
-        { col: '2 / 4', row: '2 / 4' }
-      ];
-
-      for (const p of placements) {
-        const box = document.createElement('div');
-        box.style.cssText = `
-          width: ${boxSize}px;
-          height: ${boxSize}px;
-          box-sizing: border-box;
-          grid-column: ${p.col};
-          grid-row: ${p.row};
-          place-self: center;
-        `;
-        container.appendChild(box);
-        boxes.push(box);
-      }
-    } else {
-      // 6 or 9 boxes: flex space-around inline and block / wrap
-      const colsCount = cols || (count === 6 && containerWidth >= containerHeight ? 3 : 3);
-      const rowsCount = Math.ceil(count / colsCount);
-
-      container.style.display = 'flex';
-      container.style.flexDirection = 'column';
-      container.style.justifyContent = 'space-around';
-      container.style.alignItems = 'stretch';
-
-      for (let r = 0; r < rowsCount; r++) {
-        const rowEl = document.createElement('div');
-        rowEl.style.cssText = `
-          display: flex;
-          flex-direction: row;
-          justify-content: space-around;
-          align-items: center;
-          width: 100%;
-          height: ${boxSize}px;
-          box-sizing: border-box;
-        `;
-        container.appendChild(rowEl);
-
-        for (let c = 0; c < colsCount; c++) {
-          const idx = r * colsCount + c;
-          if (idx >= count) break;
+        for (let i = 0; i < 2; i++) {
           const box = document.createElement('div');
           box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
-          rowEl.appendChild(box);
+          container.appendChild(box);
           boxes.push(box);
         }
-      }
-    }
+      } else if (count === 4) {
+        // 4 boxes: grid-lines 1/3 (Rule of Thirds)
+        container.style.display = 'grid';
+        container.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
+        container.style.gridTemplateRows = 'repeat(3, minmax(0, 1fr))';
 
-    document.body.appendChild(container);
-    const containerRect = container.getBoundingClientRect();
-    const results: BoxRect[] = boxes.map((box) => {
-      const rect = box.getBoundingClientRect();
-      return {
-        x: rect.left - containerRect.left,
-        y: rect.top - containerRect.top,
-        width: rect.width,
-        height: rect.height
-      };
-    });
-    container.remove();
-    return results;
+        const placements = [
+          { col: '1 / 3', row: '1 / 3' },
+          { col: '2 / 4', row: '1 / 3' },
+          { col: '1 / 3', row: '2 / 4' },
+          { col: '2 / 4', row: '2 / 4' }
+        ];
+
+        for (const p of placements) {
+          const box = document.createElement('div');
+          box.style.cssText = `
+            width: ${boxSize}px;
+            height: ${boxSize}px;
+            box-sizing: border-box;
+            grid-column: ${p.col};
+            grid-row: ${p.row};
+            place-self: center;
+          `;
+          container.appendChild(box);
+          boxes.push(box);
+        }
+      } else {
+        // 6 or 9 boxes: flex space-around inline and block / wrap
+        const colsCount = cols || (count === 6 && containerWidth >= containerHeight ? 3 : 3);
+        const rowsCount = Math.ceil(count / colsCount);
+
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.justifyContent = 'space-around';
+        container.style.alignItems = 'stretch';
+
+        for (let r = 0; r < rowsCount; r++) {
+          const rowEl = document.createElement('div');
+          rowEl.style.cssText = `
+            display: flex;
+            flex-direction: row;
+            justify-content: space-around;
+            align-items: center;
+            width: 100%;
+            height: ${boxSize}px;
+            box-sizing: border-box;
+          `;
+          container.appendChild(rowEl);
+
+          for (let c = 0; c < colsCount; c++) {
+            const idx = r * colsCount + c;
+            if (idx >= count) break;
+            const box = document.createElement('div');
+            box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
+            rowEl.appendChild(box);
+            boxes.push(box);
+          }
+        }
+      }
+
+      const parent = document.body || document.documentElement;
+      parent.appendChild(container);
+      const containerRect = container.getBoundingClientRect();
+      const results: BoxRect[] = boxes.map((box) => {
+        const rect = box.getBoundingClientRect();
+        return {
+          x: rect.left - containerRect.left,
+          y: rect.top - containerRect.top,
+          width: rect.width,
+          height: rect.height
+        };
+      });
+      container.remove();
+      return results;
+    } catch (err) {
+      console.warn('[PatchExtractor] getSampleLayoutFromDom warning, using fallback layout:', err);
+    }
   }
 
   return fallbackLayout(containerWidth, containerHeight, boxSize, cols, rows);

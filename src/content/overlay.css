@@ -345,6 +345,7 @@
   width: var(--image-width, 100%);
   height: var(--image-height, 100%);
   pointer-events: none;
+  overflow: hidden;
   margin: 0;
   padding: 0;
   border: none;
@@ -373,8 +374,8 @@
 /* 4 boxes: grid-lines 1/3 (Rule of Thirds) */
 .detectorRegions--4Boxes {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
 }
 
 .detectorRegions--4Boxes > .detectorRegion:nth-child(1) {

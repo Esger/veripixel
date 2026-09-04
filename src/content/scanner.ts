@@ -98,7 +98,30 @@ function isValidTargetElement(el: HTMLElement): boolean {
   return true;
 }
 
-function processElement(el: HTMLElement): void {
+async function extractImageBufferFromElement(el: HTMLElement): Promise<{ buffer: number[]; contentType: string } | null> {
+  try {
+    if (el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      const canvas = document.createElement('canvas');
+      canvas.width = el.naturalWidth;
+      canvas.height = el.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(el, 0, 0);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+      if (!blob) return null;
+      const arrayBuffer = await blob.arrayBuffer();
+      return {
+        buffer: Array.from(new Uint8Array(arrayBuffer)),
+        contentType: 'image/jpeg'
+      };
+    }
+  } catch (err) {
+    // Ignore cross-origin canvas security restrictions
+  }
+  return null;
+}
+
+async function processElement(el: HTMLElement): Promise<void> {
   if (!isExtensionContextValid()) {
     return;
   }
@@ -137,6 +160,50 @@ function processElement(el: HTMLElement): void {
   const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
   const priority = isInsideModal ? 'high' : 'normal';
 
+  const sendBufferAnalysis = async () => {
+    const bufData = await extractImageBufferFromElement(el);
+    if (!bufData || !isExtensionContextValid()) {
+      removeBadge(el);
+      return;
+    }
+
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'ANALYZE_IMAGE_BUFFER',
+          imageUrl,
+          buffer: bufData.buffer,
+          contentType: bufData.contentType,
+          priority,
+          isModal: isInsideModal
+        } as ExtensionMessage,
+        (response) => {
+          if (!isExtensionContextValid() || chrome.runtime.lastError) {
+            removeBadge(el);
+            return;
+          }
+          if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
+            if (response.result.status === 'complete') {
+              injectImageBadge(el, response.result);
+            } else {
+              removeBadge(el);
+            }
+          } else {
+            removeBadge(el);
+          }
+        }
+      );
+    } catch {
+      removeBadge(el);
+    }
+  };
+
+  // If URL is file:// or blob://, offscreen cannot fetch it over network; directly send buffer
+  if (imageUrl.startsWith('file:') || imageUrl.startsWith('blob:')) {
+    await sendBufferAnalysis();
+    return;
+  }
+
   try {
     if (!isExtensionContextValid()) {
       removeBadge(el);
@@ -150,7 +217,7 @@ function processElement(el: HTMLElement): void {
         priority,
         isModal: isInsideModal
       } as ExtensionMessage,
-      (response) => {
+      async (response) => {
         if (!isExtensionContextValid() || chrome.runtime.lastError) {
           removeBadge(el);
           return;
@@ -160,8 +227,11 @@ function processElement(el: HTMLElement): void {
           if (response.result.status === 'complete') {
             injectImageBadge(el, response.result);
           } else if (response.result.status === 'error') {
-            removeBadge(el);
+            // Attempt buffer extraction fallback in case of network/CORS failure
+            await sendBufferAnalysis();
           }
+        } else {
+          await sendBufferAnalysis();
         }
       }
     );
