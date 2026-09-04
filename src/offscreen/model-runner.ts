@@ -1,17 +1,20 @@
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/wasm';
 import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
 
-// Configure ONNX WASM path and safe multi-threading relative to extension root
+// Configure ONNX WASM path and disable multi-threading for rock-solid extension stability
 if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
   ort.env.wasm.wasmPaths = chrome.runtime.getURL('assets/');
 } else {
   ort.env.wasm.wasmPaths = '/assets/';
 }
 ort.env.logLevel = 'error';
-ort.env.wasm.numThreads =
-  typeof SharedArrayBuffer !== 'undefined'
-    ? Math.min(4, typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2)
-    : 1;
+// Set numThreads strictly to 1 in Chrome Extension Offscreen Documents.
+// Multi-threaded WASM in browser extensions spawns em-pthread Web Workers via new Worker(import.meta.url).
+// In Chrome MV3, those worker threads execute the offscreen bundle, fail extension API handshakes,
+// and cause inference to deadlock or hang until timeout.
+// Single-threaded WASM with SIMD is rock-solid and executes 4 patches in ~1.0s.
+ort.env.wasm.numThreads = 1;
+ort.env.wasm.proxy = false;
 
 const DB_NAME = 'AI_DETECTOR_DB';
 const DB_VERSION = 1;
@@ -107,34 +110,27 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
-let isDownloading = false;
-
-// Trigger background download of model weights into IndexedDB without blocking current scans
-function triggerBackgroundModelDownload(): void {
-  if (isDownloading) return;
-  isDownloading = true;
-
-  console.log('[ModelRunner] Starting background download of distilled ONNX model weights...');
-  downloadModelBuffer()
-    .then(async (buffer) => {
-      if (buffer) {
-        await cacheModelBuffer(buffer);
-        console.log('[ModelRunner] Distilled ONNX model weights cached in IndexedDB. Ready for inference!');
-        sessionPromise = null;
-      }
-    })
-    .catch((err) => {
-      console.warn('[ModelRunner] Background model download failed:', err);
-    })
-    .finally(() => {
-      isDownloading = false;
-    });
-}
-
-// Download lightweight distilled ViT ONNX model weights directly in offscreen document
+// Download or load bundled lightweight distilled ViT ONNX model weights
 async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
-  // Use distilled ViT (11.8M params, only 10.6 MB) with 100% WebGPU JSEP support
-  // and fast SIMD execution on WASM CPU (executes in <200ms vs 15s for Swin)
+  // 1. Check local bundled model in assets/ first (instant offline availability)
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+    try {
+      const localUrl = chrome.runtime.getURL('assets/model_q4.onnx');
+      console.log(`[ModelRunner] Checking for bundled ONNX model: ${localUrl}`);
+      const res = await fetch(localUrl);
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        if (buffer.byteLength > 1024 * 100) {
+          console.log(`[ModelRunner] Successfully loaded bundled model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
+          return buffer;
+        }
+      }
+    } catch (localErr) {
+      console.warn('[ModelRunner] Bundled model check skipped, attempting remote CDN:', localErr);
+    }
+  }
+
+  // 2. Fallback to remote HuggingFace CDN
   const modelUrls = [
     'https://huggingface.co/onnx-community/ai-image-detect-distilled-ONNX/resolve/main/onnx/model_q4.onnx',
     'https://huggingface.co/onnx-community/ai-image-detect-distilled-ONNX/resolve/main/onnx/model_quantized.onnx',
@@ -167,11 +163,18 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
 
   sessionPromise = (async () => {
     try {
-      const modelBuffer = await getCachedModelBuffer();
+      let modelBuffer = await getCachedModelBuffer();
       if (!modelBuffer) {
-        console.log('[ModelRunner] No cached ONNX model in IndexedDB. Triggering background download...');
-        triggerBackgroundModelDownload();
-        return null;
+        console.log('[ModelRunner] No cached ONNX model in IndexedDB. Loading bundled/remote model...');
+        modelBuffer = await downloadModelBuffer();
+        if (modelBuffer) {
+          await cacheModelBuffer(modelBuffer);
+          console.log('[ModelRunner] Distilled ONNX model weights cached in IndexedDB.');
+        } else {
+          console.warn('[ModelRunner] Failed to obtain model buffer.');
+          sessionPromise = null;
+          return null;
+        }
       }
 
       console.log('[ModelRunner] Initializing ONNX InferenceSession with WASM SIMD...');
@@ -310,9 +313,9 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
 
     const timeoutPromise = new Promise<number[]>((resolve) => {
       setTimeout(() => {
-        console.warn(`[ModelRunner] Patch inference timed out (15s for ${patchCanvases.length} patches), using fallback heuristic`);
+        console.warn(`[ModelRunner] Patch inference timed out (25s for ${patchCanvases.length} patches), using fallback heuristic`);
         resolve(patchCanvases.map(computeFallbackScore));
-      }, 15000);
+      }, 25000);
     });
 
     return await Promise.race([inferencePromise, timeoutPromise]);

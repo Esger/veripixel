@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/wasm';
 
 /**
  * Converts a 2D HTML Canvas patch into a normalized 4D Float32 Tensor for ONNX model inference.

@@ -23,6 +23,10 @@ export default defineConfig({
         {
           src: 'node_modules/onnxruntime-web/dist/*.mjs',
           dest: 'assets'
+        },
+        {
+          src: 'src/assets/model_q4.onnx',
+          dest: 'assets'
         }
       ]
     })
