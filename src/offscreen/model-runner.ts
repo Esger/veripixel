@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/all';
 import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
 
 // Configure ONNX WASM path and safe multi-threading relative to extension root
@@ -293,9 +293,9 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
 
     const timeoutPromise = new Promise<number[]>((resolve) => {
       setTimeout(() => {
-        console.warn(`[ModelRunner] Patch inference timed out (15s for ${patchCanvases.length} patches), using fallback heuristic`);
+        console.warn(`[ModelRunner] Patch inference timed out (30s for ${patchCanvases.length} patches), using fallback heuristic`);
         resolve(patchCanvases.map(computeFallbackScore));
-      }, 15000);
+      }, 30000);
     });
 
     return await Promise.race([inferencePromise, timeoutPromise]);

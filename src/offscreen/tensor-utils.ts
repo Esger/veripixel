@@ -1,9 +1,9 @@
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/all';
 
 /**
  * Converts a 2D HTML Canvas patch into a normalized 4D Float32 Tensor for ONNX model inference.
  * Shape: [1, 3, targetSize, targetSize] (NCHW format)
- * Normalization: Standard ImageNet Mean [0.485, 0.456, 0.406] and Std [0.229, 0.224, 0.225]
+ * Normalization: ViT Feature Extractor Mean [0.5, 0.5, 0.5] and Std [0.5, 0.5, 0.5] (maps [0..255] to [-1.0..1.0])
  */
 export function canvasToTensor(canvas: HTMLCanvasElement, targetSize = 224): ort.Tensor {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -22,15 +22,15 @@ export function canvasToTensor(canvas: HTMLCanvasElement, targetSize = 224): ort
   const gOffset = numPixels;
   const bOffset = 2 * numPixels;
 
-  const mean = [0.485, 0.456, 0.406];
-  const std = [0.229, 0.224, 0.225];
+  const mean = [0.5, 0.5, 0.5];
+  const std = [0.5, 0.5, 0.5];
 
   for (let i = 0; i < numPixels; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
 
-    // Normalize [0..255] -> [0.0..1.0] and subtract mean / divide by std
+    // Normalize [0..255] -> [-1.0..1.0]
     float32Data[rOffset + i] = (r / 255.0 - mean[0]) / std[0];
     float32Data[gOffset + i] = (g / 255.0 - mean[1]) / std[1];
     float32Data[bOffset + i] = (b / 255.0 - mean[2]) / std[2];
@@ -53,8 +53,8 @@ export function canvasesToBatchTensor(canvases: HTMLCanvasElement[], targetSize 
   const patchFloatCount = 3 * numPixels;
   const float32Data = new Float32Array(batchSize * patchFloatCount);
 
-  const mean = [0.485, 0.456, 0.406];
-  const std = [0.229, 0.224, 0.225];
+  const mean = [0.5, 0.5, 0.5];
+  const std = [0.5, 0.5, 0.5];
 
   for (let b = 0; b < batchSize; b++) {
     const canvas = canvases[b];
