@@ -261,38 +261,38 @@ async function processImageBuffer(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
+  const uint8Array = new Uint8Array(buffer);
+  const blob = new Blob([uint8Array], { type: contentType });
+
+  // 1. Extract patches (fast 1x1, standard 2x2 or deep 3x2, 2x3, 3x3 grid)
+  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+
+  // 2. Extract EXIF / Metadata
+  const metadata = await extractMetadata(blob);
+
+  if (extraction.patches.length === 0) {
+    return {
+      imageUrl,
+      status: 'error',
+      aiScore: 0,
+      patchScores: [],
+      metadata,
+      timestamp: Date.now(),
+      supportsDeepSampling: false,
+      deepGrid: extraction.deepGrid,
+      currentGrid: extraction.currentGrid,
+      sampleMode,
+      imageWidth: extraction.width,
+      imageHeight: extraction.height,
+      error: 'Image too small (<224x224)'
+    };
+  }
+
+  // 3. Serialized ONNX model inference inside priority concurrency queue
   return queue.run(
     async () => {
-      const uint8Array = new Uint8Array(buffer);
-      const blob = new Blob([uint8Array], { type: contentType });
-
-      // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
-      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
-
-      // 2. Extract EXIF / Metadata
-      const metadata = await extractMetadata(blob);
-
-      if (extraction.patches.length === 0) {
-        return {
-          imageUrl,
-          status: 'error',
-          aiScore: 0,
-          patchScores: [],
-          metadata,
-          timestamp: Date.now(),
-          supportsDeepSampling: false,
-          deepGrid: extraction.deepGrid,
-          currentGrid: extraction.currentGrid,
-          sampleMode,
-          imageWidth: extraction.width,
-          imageHeight: extraction.height,
-          error: 'Image too small (<224x224)'
-        };
-      }
-
-      // 3. Compute patch scores via ONNX Runtime Web
       const patchCanvases = extraction.patches.map((p) => p.canvas);
       const patchScoresList = await runBatchedPatchInference(patchCanvases);
 
@@ -343,46 +343,56 @@ async function processImageUrl(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
+  let blob: Blob;
+  try {
+    const response = await fetch(imageUrl, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+    blob = await response.blob();
+  } catch (fetchErr) {
+    return {
+      imageUrl,
+      status: 'error',
+      aiScore: 0,
+      patchScores: [],
+      metadata: { exifPresent: false, c2paPresent: false, qualityScore: 0.5 },
+      timestamp: Date.now(),
+      error: `Network fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  // 1. Extract patches concurrently (fast 1x1, standard 2x2 or deep grid)
+  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+
+  // 2. Extract EXIF / Metadata
+  const metadata = await extractMetadata(blob);
+
+  if (extraction.patches.length === 0) {
+    return {
+      imageUrl,
+      status: 'error',
+      aiScore: 0,
+      patchScores: [],
+      metadata,
+      timestamp: Date.now(),
+      supportsDeepSampling: false,
+      deepGrid: extraction.deepGrid,
+      currentGrid: extraction.currentGrid,
+      sampleMode,
+      imageWidth: extraction.width,
+      imageHeight: extraction.height,
+      error: 'Image too small (<224x224)'
+    };
+  }
+
+  // 3. Serialized ONNX model inference inside priority concurrency queue
   return queue.run(
     async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
-      let blob: Blob;
-      try {
-        const response = await fetch(imageUrl, { signal: controller.signal });
-        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-        blob = await response.blob();
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
-      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
-
-      // 2. Extract EXIF / Metadata
-      const metadata = await extractMetadata(blob);
-
-      if (extraction.patches.length === 0) {
-        return {
-          imageUrl,
-          status: 'error',
-          aiScore: 0,
-          patchScores: [],
-          metadata,
-          timestamp: Date.now(),
-          supportsDeepSampling: false,
-          deepGrid: extraction.deepGrid,
-          currentGrid: extraction.currentGrid,
-          sampleMode,
-          imageWidth: extraction.width,
-          imageHeight: extraction.height,
-          error: 'Image too small (<224x224)'
-        };
-      }
-
-      // 3. Compute patch scores via ONNX Runtime Web
       const patchCanvases = extraction.patches.map((p) => p.canvas);
       const patchScoresList = await runBatchedPatchInference(patchCanvases);
 

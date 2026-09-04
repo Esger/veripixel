@@ -12,7 +12,7 @@ export interface ExtractionResult {
   supportsDeepSampling: boolean;
   deepGrid: GridDimensions;
   currentGrid: GridDimensions;
-  sampleMode: 'standard' | 'deep';
+  sampleMode: 'fast' | 'standard' | 'deep';
   width: number;
   height: number;
 }
@@ -25,9 +25,10 @@ interface BoxRect {
 }
 
 /**
- * Fallback layout generator in environments without DOM (e.g. Node tests).
+ * Pure mathematical layout generator for sample box coordinates.
+ * Completely eliminates offscreen DOM insertion and synchronous layout reflows.
  */
-function fallbackLayout(
+export function calculateSampleLayout(
   containerWidth: number,
   containerHeight: number,
   boxSize: number,
@@ -36,12 +37,14 @@ function fallbackLayout(
 ): BoxRect[] {
   const count = cols * rows;
   if (count === 1) {
-    return [{
-      x: Math.max(0, (containerWidth - boxSize) / 2),
-      y: Math.max(0, (containerHeight - boxSize) / 2),
-      width: boxSize,
-      height: boxSize
-    }];
+    return [
+      {
+        x: Math.max(0, (containerWidth - boxSize) / 2),
+        y: Math.max(0, (containerHeight - boxSize) / 2),
+        width: boxSize,
+        height: boxSize
+      }
+    ];
   }
   if (count === 4) {
     const half = boxSize / 2;
@@ -56,7 +59,7 @@ function fallbackLayout(
       { x: x2, y: y2, width: boxSize, height: boxSize }
     ];
   }
-  // Generic space-around
+  // Generic space-around layout for 2, 6, 9 boxes
   const xSlack = Math.max(0, containerWidth - cols * boxSize);
   const ySlack = Math.max(0, containerHeight - rows * boxSize);
   const xOuter = xSlack / (cols * 2);
@@ -75,151 +78,6 @@ function fallbackLayout(
     }
   }
   return res;
-}
-
-/**
- * Uses a real hidden browser container to let CSS Grid and Flexbox layout the exact sample boxes:
- * - 1 box: grid lines 50%
- * - 2 boxes: flex space-around / wrap
- * - 4 boxes: grid-lines 1/3 (Rule of Thirds)
- * - 6 boxes: flex space-around inline and block / wrap
- * - 9 boxes: flex space-around inline and block / wrap
- * Then reads rendered positions and sizes directly from the DOM elements.
- */
-function getSampleLayoutFromDom(
-  containerWidth: number,
-  containerHeight: number,
-  boxSize: number,
-  cols: number,
-  rows: number
-): BoxRect[] {
-  const count = cols * rows;
-
-  if (typeof document !== 'undefined') {
-    try {
-      const container = document.createElement('div');
-      container.style.cssText = `
-        position: absolute;
-        visibility: hidden;
-        pointer-events: none;
-        overflow: hidden;
-        top: 0;
-        left: 0;
-        width: ${containerWidth}px;
-        height: ${containerHeight}px;
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      `;
-
-      const boxes: HTMLElement[] = [];
-
-      if (count === 1) {
-        // 1 box: grid lines 50%
-        container.style.display = 'grid';
-        container.style.gridTemplateColumns = '1fr';
-        container.style.gridTemplateRows = '1fr';
-        container.style.placeItems = 'center';
-
-        const box = document.createElement('div');
-        box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; box-sizing: border-box; place-self: center;`;
-        container.appendChild(box);
-        boxes.push(box);
-      } else if (count === 2) {
-        // 2 boxes: flex space-around / wrap
-        container.style.display = 'flex';
-        container.style.flexDirection = 'row';
-        container.style.flexWrap = 'wrap';
-        container.style.justifyContent = 'space-around';
-        container.style.alignItems = 'center';
-        container.style.alignContent = 'space-around';
-
-        for (let i = 0; i < 2; i++) {
-          const box = document.createElement('div');
-          box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
-          container.appendChild(box);
-          boxes.push(box);
-        }
-      } else if (count === 4) {
-        // 4 boxes: grid-lines 1/3 (Rule of Thirds)
-        container.style.display = 'grid';
-        container.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
-        container.style.gridTemplateRows = 'repeat(3, minmax(0, 1fr))';
-
-        const placements = [
-          { col: '1 / 3', row: '1 / 3' },
-          { col: '2 / 4', row: '1 / 3' },
-          { col: '1 / 3', row: '2 / 4' },
-          { col: '2 / 4', row: '2 / 4' }
-        ];
-
-        for (const p of placements) {
-          const box = document.createElement('div');
-          box.style.cssText = `
-            width: ${boxSize}px;
-            height: ${boxSize}px;
-            box-sizing: border-box;
-            grid-column: ${p.col};
-            grid-row: ${p.row};
-            place-self: center;
-          `;
-          container.appendChild(box);
-          boxes.push(box);
-        }
-      } else {
-        // 6 or 9 boxes: flex space-around inline and block / wrap
-        const colsCount = cols || (count === 6 && containerWidth >= containerHeight ? 3 : 3);
-        const rowsCount = Math.ceil(count / colsCount);
-
-        container.style.display = 'flex';
-        container.style.flexDirection = 'column';
-        container.style.justifyContent = 'space-around';
-        container.style.alignItems = 'stretch';
-
-        for (let r = 0; r < rowsCount; r++) {
-          const rowEl = document.createElement('div');
-          rowEl.style.cssText = `
-            display: flex;
-            flex-direction: row;
-            justify-content: space-around;
-            align-items: center;
-            width: 100%;
-            height: ${boxSize}px;
-            box-sizing: border-box;
-          `;
-          container.appendChild(rowEl);
-
-          for (let c = 0; c < colsCount; c++) {
-            const idx = r * colsCount + c;
-            if (idx >= count) break;
-            const box = document.createElement('div');
-            box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
-            rowEl.appendChild(box);
-            boxes.push(box);
-          }
-        }
-      }
-
-      const parent = document.body || document.documentElement;
-      parent.appendChild(container);
-      const containerRect = container.getBoundingClientRect();
-      const results: BoxRect[] = boxes.map((box) => {
-        const rect = box.getBoundingClientRect();
-        return {
-          x: rect.left - containerRect.left,
-          y: rect.top - containerRect.top,
-          width: rect.width,
-          height: rect.height
-        };
-      });
-      container.remove();
-      return results;
-    } catch (err) {
-      console.warn('[PatchExtractor] getSampleLayoutFromDom warning, using fallback layout:', err);
-    }
-  }
-
-  return fallbackLayout(containerWidth, containerHeight, boxSize, cols, rows);
 }
 
 /**
@@ -251,8 +109,8 @@ function getGridPositionName(col: number, row: number, totalCols: number, totalR
 
 /**
  * Extracts patches from image centered on grid.
- * - In standard mode: extracts 4 corner samples (2x2) for all images >= targetSize (224px),
- *   allowing overlap on smaller images to guarantee comprehensive corner inspection.
+ * - In fast mode: extracts 1 center crop (224x224) for immediate ~280ms badge display.
+ * - In standard mode: extracts 4 corner samples (2x2) for all images >= targetSize (224px).
  * - In deep mode: extracts up to 9 samples (3x3) if image dimensions permit.
  * - If only one side is >= targetSize, letterboxes/pillarboxes the smaller side.
  * - If BOTH sides are < targetSize (224), returns empty patches to skip small avatars.
@@ -260,7 +118,7 @@ function getGridPositionName(col: number, row: number, totalCols: number, totalR
 export async function extractRuleOfThirdsPatches(
   blob: Blob,
   targetSize = 224,
-  sampleMode: 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
 ): Promise<ExtractionResult> {
   let imageBitmap: ImageBitmap;
   try {
@@ -289,7 +147,10 @@ export async function extractRuleOfThirdsPatches(
   let activeCols = 1;
   let activeRows = 1;
 
-  if (sampleMode === 'deep' && supportsDeepSampling) {
+  if (sampleMode === 'fast') {
+    activeCols = 1;
+    activeRows = 1;
+  } else if (sampleMode === 'deep' && supportsDeepSampling) {
     activeCols = maxCols;
     activeRows = maxRows;
   } else {
@@ -304,7 +165,7 @@ export async function extractRuleOfThirdsPatches(
     total: activeCols * activeRows
   };
 
-  const boxRects = getSampleLayoutFromDom(width, height, targetSize, activeCols, activeRows);
+  const boxRects = calculateSampleLayout(width, height, targetSize, activeCols, activeRows);
   const patches: ExtractedPatch[] = [];
 
   let patchIndex = 0;
@@ -379,7 +240,7 @@ export async function extractRuleOfThirdsPatches(
     supportsDeepSampling,
     deepGrid,
     currentGrid,
-    sampleMode: sampleMode === 'deep' && supportsDeepSampling ? 'deep' : 'standard',
+    sampleMode: sampleMode === 'fast' ? 'fast' : sampleMode === 'deep' && supportsDeepSampling ? 'deep' : 'standard',
     width,
     height
   };

@@ -198,7 +198,8 @@ async function processElement(el: HTMLElement): Promise<void> {
           type: 'ANALYZE_IMAGE',
           imageUrl: dataUrl,
           priority,
-          isModal: isInsideModal
+          isModal: isInsideModal,
+          sampleMode: 'fast'
         } as ExtensionMessage,
         (response) => {
           inFlightUrls.delete(imageUrl);
@@ -248,7 +249,8 @@ async function processElement(el: HTMLElement): Promise<void> {
         type: 'ANALYZE_IMAGE',
         imageUrl,
         priority,
-        isModal: isInsideModal
+        isModal: isInsideModal,
+        sampleMode: 'fast'
       } as ExtensionMessage,
       async (response) => {
         inFlightUrls.delete(imageUrl);

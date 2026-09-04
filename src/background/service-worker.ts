@@ -226,19 +226,23 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         // Check cache first (unless forceRescan is requested or sampleMode differs)
         if (!forceRescan) {
           const cached = await getCachedResult(imageUrl);
-          if (
-            cached &&
-            (cached.sampleMode === requestedSampleMode || (!cached.sampleMode && requestedSampleMode === 'standard'))
-          ) {
-            if (tabId !== undefined) {
-              const stats = getOrCreateTabStats(tabId);
-              stats.isScanning = false;
-              recordTabImageResult(stats, cached);
-              updateTabToolbarBadge(tabId, stats);
-              broadcastTabStatsUpdate(stats);
+          if (cached) {
+            const isCacheCompatible =
+              cached.sampleMode === requestedSampleMode ||
+              (!cached.sampleMode && requestedSampleMode === 'standard') ||
+              (requestedSampleMode === 'fast' && (cached.sampleMode === 'standard' || cached.sampleMode === 'deep'));
+
+            if (isCacheCompatible) {
+              if (tabId !== undefined) {
+                const stats = getOrCreateTabStats(tabId);
+                stats.isScanning = false;
+                recordTabImageResult(stats, cached);
+                updateTabToolbarBadge(tabId, stats);
+                broadcastTabStatsUpdate(stats);
+              }
+              sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
+              return;
             }
-            sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
-            return;
           }
         }
 
