@@ -1,25 +1,26 @@
 import * as ort from 'onnxruntime-web/wasm';
 import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
 
-// Configure ONNX WASM path and disable multi-threading for rock-solid extension stability
+// Configure ONNX WASM path and disable multi-threading for rock-solid extension stability.
+// Using an object { wasm: ... } guarantees useEmbeddedModule evaluates to true in onnxruntime-web,
+// which completely bypasses dynamic .mjs import and prevents Web Worker deadlocks in Chrome MV3 offscreen documents.
 if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
-  ort.env.wasm.wasmPaths = chrome.runtime.getURL('assets/');
+  ort.env.wasm.wasmPaths = {
+    wasm: chrome.runtime.getURL('assets/ort-wasm-simd-threaded.wasm')
+  };
 } else {
-  ort.env.wasm.wasmPaths = '/assets/';
+  ort.env.wasm.wasmPaths = {
+    wasm: '/assets/ort-wasm-simd-threaded.wasm'
+  };
 }
 ort.env.logLevel = 'error';
-// Set numThreads strictly to 1 in Chrome Extension Offscreen Documents.
-// Multi-threaded WASM in browser extensions spawns em-pthread Web Workers via new Worker(import.meta.url).
-// In Chrome MV3, those worker threads execute the offscreen bundle, fail extension API handshakes,
-// and cause inference to deadlock or hang until timeout.
-// Single-threaded WASM with SIMD is rock-solid and executes 4 patches in ~1.0s.
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
 
 const DB_NAME = 'AI_DETECTOR_DB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'models';
-const MODEL_KEY = 'distilled_vit_q4_v1';
+const MODEL_KEY = 'smogy_swin_q4_v1';
 
 let sessionPromise: Promise<ort.InferenceSession | null> | null = null;
 let cachedDB: IDBDatabase | null = null;
@@ -71,9 +72,10 @@ export async function getCachedModelBuffer(): Promise<ArrayBuffer | null> {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
 
-      // Clean up legacy bulky Swin weights (52MB) from IndexedDB
+      // Clean up legacy model weights from previous versions
       try {
         store.delete('primary_onnx_model');
+        store.delete('distilled_vit_q4_v1');
       } catch (e) {}
 
       const req = store.get(MODEL_KEY);
@@ -110,7 +112,7 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
-// Download or load bundled lightweight distilled ViT ONNX model weights
+// Download or load bundled high-accuracy SMOGY ONNX model weights
 async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
   // 1. Check local bundled model in assets/ first (instant offline availability)
   if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
@@ -132,9 +134,8 @@ async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
 
   // 2. Fallback to remote HuggingFace CDN
   const modelUrls = [
-    'https://huggingface.co/onnx-community/ai-image-detect-distilled-ONNX/resolve/main/onnx/model_q4.onnx',
-    'https://huggingface.co/onnx-community/ai-image-detect-distilled-ONNX/resolve/main/onnx/model_quantized.onnx',
-    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4.onnx'
+    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4.onnx',
+    'https://huggingface.co/onnx-community/ai-image-detect-distilled-ONNX/resolve/main/onnx/model_q4.onnx'
   ];
 
   for (const url of modelUrls) {
@@ -163,25 +164,31 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
 
   sessionPromise = (async () => {
     try {
-      let modelBuffer = await getCachedModelBuffer();
+      // 1. Prioritize clean bundled local model asset in extension (zero network latency, never stale)
+      let modelBuffer = await downloadModelBuffer();
+
+      // 2. Fallback to IndexedDB cache if running in web/testing environment
       if (!modelBuffer) {
-        console.log('[ModelRunner] No cached ONNX model in IndexedDB. Loading bundled/remote model...');
-        modelBuffer = await downloadModelBuffer();
-        if (modelBuffer) {
-          await cacheModelBuffer(modelBuffer);
-          console.log('[ModelRunner] Distilled ONNX model weights cached in IndexedDB.');
-        } else {
-          console.warn('[ModelRunner] Failed to obtain model buffer.');
-          sessionPromise = null;
-          return null;
-        }
+        modelBuffer = await getCachedModelBuffer();
+      }
+
+      if (!modelBuffer) {
+        console.warn('[ModelRunner] Failed to obtain model buffer.');
+        sessionPromise = null;
+        return null;
       }
 
       console.log('[ModelRunner] Initializing ONNX InferenceSession with WASM SIMD...');
       const session = await ort.InferenceSession.create(modelBuffer, {
         executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
-        logSeverityLevel: 3 // Suppress internal ONNX warnings
+        logSeverityLevel: 3, // Suppress internal ONNX warnings
+        extra: {
+          session: {
+            intra_op_num_threads: '1',
+            inter_op_num_threads: '1'
+          }
+        }
       });
 
       // Warm up session with a 1-patch dummy tensor to preallocate WASM memory & graph execution structures
@@ -311,14 +318,21 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
       }
     })();
 
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<number[]>((resolve) => {
-      setTimeout(() => {
-        console.warn(`[ModelRunner] Patch inference timed out (25s for ${patchCanvases.length} patches), using fallback heuristic`);
+      timeoutTimer = setTimeout(() => {
+        console.warn(`[ModelRunner] Patch inference timed out (35s for ${patchCanvases.length} patches), using fallback heuristic`);
         resolve(patchCanvases.map(computeFallbackScore));
-      }, 25000);
+      }, 35000);
     });
 
-    return await Promise.race([inferencePromise, timeoutPromise]);
+    try {
+      return await Promise.race([inferencePromise, timeoutPromise]);
+    } finally {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+    }
   } catch (err) {
     console.error('[ModelRunner] Inference error:', err);
     return patchCanvases.map(computeFallbackScore);

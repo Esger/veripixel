@@ -61,6 +61,13 @@
   box-shadow: 0 0 6px #EF4444;
 }
 
+.detectorBadge--modalHidden {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 .detectorBadge__dot {
   width: 7px;
   height: 7px;
@@ -137,6 +144,13 @@
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
   width: 260px;
   z-index: 2147483647;
+}
+
+.detectorTooltip--modalHidden {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .detectorTooltip__header {
@@ -335,6 +349,13 @@
   z-index: 2147483642;
   box-sizing: border-box;
   border-radius: inherit;
+}
+
+.detectorRegionsWrapper--modalHidden {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 /* Container mimics the real unclipped image size and position */

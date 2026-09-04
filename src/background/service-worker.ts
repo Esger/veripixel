@@ -114,20 +114,19 @@ export function getOrCreateTabStats(tabId: number): TabScanStats {
 }
 
 function updateTabToolbarBadge(tabId: number, stats: TabScanStats): void {
+  if (!chrome.action) return;
   try {
-    if (!chrome.action) return;
-
     if (stats.aiDetected > 0) {
-      chrome.action.setBadgeText({ tabId, text: `${stats.aiDetected}` });
-      chrome.action.setBadgeBackgroundColor({ tabId, color: '#EF4444' }); // Red
+      chrome.action.setBadgeText({ tabId, text: `${stats.aiDetected}` }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#EF4444' }).catch(() => {}); // Red
     } else if (stats.suspectedAi > 0) {
-      chrome.action.setBadgeText({ tabId, text: `${stats.suspectedAi}` });
-      chrome.action.setBadgeBackgroundColor({ tabId, color: '#F59E0B' }); // Amber/Orange
+      chrome.action.setBadgeText({ tabId, text: `${stats.suspectedAi}` }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#F59E0B' }).catch(() => {}); // Amber/Orange
     } else if (stats.isScanning) {
-      chrome.action.setBadgeText({ tabId, text: '...' });
-      chrome.action.setBadgeBackgroundColor({ tabId, color: '#3B82F6' }); // Blue
+      chrome.action.setBadgeText({ tabId, text: '...' }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ tabId, color: '#3B82F6' }).catch(() => {}); // Blue
     } else {
-      chrome.action.setBadgeText({ tabId, text: '' });
+      chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
     }
   } catch (e) {}
 }
@@ -138,19 +137,60 @@ function broadcastTabStatsUpdate(stats: TabScanStats): void {
   } catch (e) {}
 }
 
-// Clear stats and badge when a tab reloads or navigates
+// Track currently active tab to prioritize user's active viewport over background tabs
+let currentActiveTabId: number | null = null;
+
+try {
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    if (tabs && tabs[0]?.id !== undefined) {
+      currentActiveTabId = tabs[0].id;
+    }
+  });
+} catch (e) {}
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  currentActiveTabId = activeInfo.tabId;
+  chrome.runtime.sendMessage({
+    type: 'SET_ACTIVE_TAB',
+    activeTabId: activeInfo.tabId
+  } as ExtensionMessage).catch(() => {});
+});
+
+if (chrome.windows?.onFocusChanged) {
+  chrome.windows.onFocusChanged.addListener(() => {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (tabs && tabs[0]?.id !== undefined) {
+        currentActiveTabId = tabs[0].id;
+        chrome.runtime.sendMessage({
+          type: 'SET_ACTIVE_TAB',
+          activeTabId: tabs[0].id
+        } as ExtensionMessage).catch(() => {});
+      }
+    });
+  });
+}
+
+// Clear stats, badge, and pending queue when a tab reloads or navigates
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
     tabStatsMap.delete(tabId);
     if (chrome.action) {
       chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
     }
+    chrome.runtime.sendMessage({
+      type: 'CANCEL_TAB_TASKS',
+      tabId
+    } as ExtensionMessage).catch(() => {});
   }
 });
 
-// Clean up memory when tab is closed
+// Clean up memory and cancel tasks when a tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabStatsMap.delete(tabId);
+  chrome.runtime.sendMessage({
+    type: 'CANCEL_TAB_TASKS',
+    tabId
+  } as ExtensionMessage).catch(() => {});
 });
 
 // Listen for messages from Content Scripts, Popup, or Offscreen Document
@@ -169,6 +209,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       const isModal = message.isModal || false;
       const requestedSampleMode = message.sampleMode || 'standard';
       const forceRescan = message.forceRescan || false;
+
+      // Active tab tasks get normal/high priority; background tab tasks get background priority
+      const isSenderActive = tabId !== undefined && currentActiveTabId !== null && tabId === currentActiveTabId;
+      const effectivePriority: 'high' | 'normal' | 'background' =
+        isModal || priority === 'high' ? 'high' : isSenderActive ? 'normal' : 'background';
 
       try {
         if (tabId !== undefined) {
@@ -206,14 +251,16 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 imageUrl,
                 buffer: message.buffer,
                 contentType: message.contentType,
-                priority,
+                tabId,
+                priority: effectivePriority,
                 isModal,
                 sampleMode: requestedSampleMode
               }
             : {
                 type: 'PROCESS_IMAGE_URL',
                 imageUrl,
-                priority,
+                tabId,
+                priority: effectivePriority,
                 isModal,
                 sampleMode: requestedSampleMode
               };

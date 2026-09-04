@@ -14,14 +14,59 @@ interface BadgeEntry {
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
 let prevModalOpen = false;
 
-function isElementVisible(el: HTMLElement): boolean {
+export function isDetectorElement(el: Element): boolean {
+  return (
+    el.classList.contains('detectorBadge') ||
+    el.classList.contains('detectorTooltip') ||
+    el.classList.contains('detectorRegion') ||
+    el.classList.contains('detectorRegions') ||
+    el.classList.contains('detectorRegionsWrapper')
+  );
+}
+
+function isInsideHeaderOrNav(el: HTMLElement): boolean {
+  let curr: HTMLElement | null = el;
+  while (curr && curr !== document.body && curr !== document.documentElement) {
+    const tag = curr.tagName.toUpperCase();
+    if (tag === 'HEADER' || tag === 'NAV' || tag === 'ASIDE' || tag === 'FOOTER') return true;
+    const role = curr.getAttribute('role');
+    if (role === 'banner' || role === 'navigation' || role === 'contentinfo') return true;
+    const cls = curr.className || '';
+    if (typeof cls === 'string' && /(nav|navbar|header|menu|toolbar|breadcrumb|accordion)/i.test(cls)) return true;
+    curr = curr.parentElement;
+  }
+  return false;
+}
+
+function isElementVisibleInViewport(el: HTMLElement): boolean {
   if (!el.isConnected) return false;
   const style = window.getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+  if (
+    style.display === 'none' ||
+    style.visibility === 'hidden' ||
+    parseFloat(style.opacity || '1') <= 0.05 ||
+    style.pointerEvents === 'none'
+  ) {
+    return false;
+  }
+  if (el.getAttribute('aria-hidden') === 'true') {
+    return false;
+  }
+  if (el.getAttribute('data-state') === 'closed') {
     return false;
   }
   const rect = el.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  // Must at least partially intersect the visible viewport
+  if (
+    rect.right <= 0 ||
+    rect.bottom <= 0 ||
+    rect.left >= window.innerWidth ||
+    rect.top >= window.innerHeight
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -133,60 +178,123 @@ function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
   }
 }
 
+export function isPageInModalState(): boolean {
+  const bodyClass = document.body?.className || '';
+  const htmlClass = document.documentElement?.className || '';
+  const hasBodyModalClass = /(modal-open|ReactModal__Body--open|swal2-shown|pswp-open|with-modal)/i.test(
+    bodyClass + ' ' + htmlClass
+  );
+  if (hasBodyModalClass) return true;
+  return false;
+}
+
 export function getActiveModalElements(): HTMLElement[] {
   const activeModals: HTMLElement[] = [];
 
-  // 1. Native <dialog open> (excluding our own elements)
+  const addModal = (el: HTMLElement) => {
+    if (
+      !isDetectorElement(el) &&
+      el !== document.body &&
+      el !== document.documentElement &&
+      !isInsideHeaderOrNav(el) &&
+      !activeModals.includes(el)
+    ) {
+      activeModals.push(el);
+    }
+  };
+
+  // 1. Native <dialog open> (excluding our own elements and header/nav)
   const openDialogs = document.querySelectorAll<HTMLDialogElement>('dialog[open]');
   for (const dialog of openDialogs) {
-    if (
-      !dialog.classList.contains('detectorBadge') &&
-      !dialog.classList.contains('detectorTooltip') &&
-      !dialog.classList.contains('detectorRegion') &&
-      !dialog.classList.contains('detectorRegions') &&
-      !dialog.classList.contains('detectorRegionsWrapper')
-    ) {
-      activeModals.push(dialog);
+    if (isElementVisibleInViewport(dialog)) {
+      addModal(dialog);
     }
   }
 
-  // 2. Open popovers on page (excluding our own elements)
-  const popovers = document.querySelectorAll<HTMLElement>(
-    '[popover]:not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper)'
-  );
+  // 2. Open native popovers on page (excluding our own elements)
+  const popovers = document.querySelectorAll<HTMLElement>('[popover]');
   for (const popover of popovers) {
     try {
-      if (popover.matches(':popover-open')) {
-        activeModals.push(popover);
+      if (popover.matches(':popover-open') && isElementVisibleInViewport(popover)) {
+        addModal(popover);
       }
     } catch (e) {}
   }
 
-  // 3. Elements with aria-modal="true" that are visible
-  const ariaModals = document.querySelectorAll<HTMLElement>('[aria-modal="true"]');
+  // 3. WAI-ARIA Modal / Dialog semantics (must not be inside header/nav)
+  const ariaModals = document.querySelectorAll<HTMLElement>(
+    '[aria-modal="true"], [role="dialog"], [role="alertdialog"]'
+  );
   for (const modal of ariaModals) {
-    if (isElementVisible(modal) && !activeModals.includes(modal)) {
-      activeModals.push(modal);
+    if (isInsideHeaderOrNav(modal)) continue;
+    if (isElementVisibleInViewport(modal)) {
+      const style = window.getComputedStyle(modal);
+      const isPositioned = style.position === 'fixed' || style.position === 'absolute';
+      const isAriaModal = modal.getAttribute('aria-modal') === 'true';
+      if (isPositioned || isAriaModal) {
+        const rect = modal.getBoundingClientRect();
+        if (rect.width >= 120 && rect.height >= 100) {
+          addModal(modal);
+        }
+      }
     }
   }
 
-  // 4. Fixed or absolute elements with class containing modal, dialog, or lightbox
-  const modalCandidates = document.querySelectorAll<HTMLElement>(
-    '[class*="modal" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper), ' +
-      '[class*="dialog" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper), ' +
-      '[class*="lightbox" i]:not(body):not(html):not(.detectorBadge):not(.detectorTooltip):not(.detectorRegion):not(.detectorRegions):not(.detectorRegionsWrapper)'
+  // 4. Real non-native modal / lightbox / drawer / popover containers
+  const nonNativeCandidates = document.querySelectorAll<HTMLElement>(
+    '[class*="modal" i]:not(body):not(html), ' +
+      '[class*="lightbox" i]:not(body):not(html), ' +
+      '[class*="popover" i]:not(body):not(html), ' +
+      '[class*="pswp" i]:not(body):not(html), ' +
+      '[class*="fancybox" i]:not(body):not(html), ' +
+      '[class*="drawer" i]:not(body):not(html), ' +
+      '[class*="offcanvas" i]:not(body):not(html), ' +
+      '[class*="modal-backdrop" i]:not(body):not(html), ' +
+      '[class*="dialog-backdrop" i]:not(body):not(html), ' +
+      '[id*="modal" i]:not(body):not(html), ' +
+      '[id*="popover" i]:not(body):not(html), ' +
+      '[id*="lightbox" i]:not(body):not(html)'
   );
 
-  for (const candidate of modalCandidates) {
-    if (!candidate.isConnected) continue;
-    const style = window.getComputedStyle(candidate);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+  for (const candidate of nonNativeCandidates) {
+    if (isDetectorElement(candidate)) continue;
+    if (
+      candidate.tagName === 'BUTTON' ||
+      candidate.tagName === 'A' ||
+      candidate.tagName === 'INPUT' ||
+      /(trigger|button|btn|link|opener|launcher|toggle)/i.test(candidate.className || '')
+    ) {
       continue;
     }
-    if (style.position === 'fixed' || style.position === 'absolute' || candidate.tagName === 'DIALOG') {
-      const rect = candidate.getBoundingClientRect();
-      if (rect.width > 120 && rect.height > 120 && !activeModals.includes(candidate)) {
-        activeModals.push(candidate);
+    if (isInsideHeaderOrNav(candidate)) continue;
+    if (!isElementVisibleInViewport(candidate)) continue;
+
+    const style = window.getComputedStyle(candidate);
+    const isPositioned = style.position === 'fixed' || style.position === 'absolute';
+    const isDialogTag = candidate.tagName === 'DIALOG';
+    const rect = candidate.getBoundingClientRect();
+
+    if (isPositioned || isDialogTag) {
+      if (rect.width >= 120 && rect.height >= 100) {
+        addModal(candidate);
+      }
+    }
+  }
+
+  // 5. Full-viewport fixed backdrop check
+  const allFixed = document.querySelectorAll<HTMLElement>('body > *');
+  const vpW = window.innerWidth;
+  const vpH = window.innerHeight;
+  for (const el of allFixed) {
+    if (isDetectorElement(el)) continue;
+    if (isInsideHeaderOrNav(el)) continue;
+    if (!isElementVisibleInViewport(el)) continue;
+    const style = window.getComputedStyle(el);
+    if (style.position === 'fixed') {
+      const rect = el.getBoundingClientRect();
+      const isBackdropClass = /(backdrop|overlay-backdrop|modal|pswp__bg)/i.test(el.className || '');
+      if (rect.width >= vpW * 0.75 && rect.height >= vpH * 0.75 && isBackdropClass) {
+        addModal(el);
       }
     }
   }
@@ -226,9 +334,55 @@ function hideRegionsForEntry(entry: BadgeEntry): void {
   }
 }
 
+function hideBadgeForEntry(entry: BadgeEntry): void {
+  hideRegionsForEntry(entry);
+  if (entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open')) {
+    try {
+      entry.tooltipEl.hidePopover();
+    } catch (e) {}
+  }
+  if (entry.badgeEl.matches && entry.badgeEl.matches(':popover-open')) {
+    try {
+      entry.badgeEl.hidePopover();
+    } catch (e) {}
+  }
+  entry.badgeEl.classList.add('detectorBadge--modalHidden');
+  entry.badgeEl.style.display = 'none';
+  if (entry.regionsWrapperEl) {
+    entry.regionsWrapperEl.classList.add('detectorRegionsWrapper--modalHidden');
+  }
+}
+
+function showBadgeForEntry(entry: BadgeEntry, targetEl: HTMLElement): void {
+  entry.badgeEl.classList.remove('detectorBadge--modalHidden');
+  entry.badgeEl.style.display = '';
+  if (entry.regionsWrapperEl) {
+    entry.regionsWrapperEl.classList.remove('detectorRegionsWrapper--modalHidden');
+  }
+
+  const rect = targetEl.getBoundingClientRect();
+  const hasDimensions = rect.width > 0 && rect.height > 0;
+  const isDisplayNone =
+    window.getComputedStyle(targetEl).display === 'none' ||
+    window.getComputedStyle(targetEl).visibility === 'hidden';
+
+  if (!hasDimensions || isDisplayNone) {
+    hideBadgeForEntry(entry);
+    return;
+  }
+
+  if (!entry.badgeEl.matches || !entry.badgeEl.matches(':popover-open')) {
+    try {
+      entry.badgeEl.showPopover();
+    } catch (e) {}
+  }
+
+  applyRegionPositions(targetEl, entry);
+}
+
 export function checkPageModalState(onModalClosed?: () => void): void {
   const activeModals = getActiveModalElements();
-  const isModalOpen = activeModals.length > 0;
+  const isModalOpen = activeModals.length > 0 || isPageInModalState();
 
   // When a modal opens: cancel background calculations to prioritize newly added modal images
   if (isModalOpen && !prevModalOpen) {
@@ -253,47 +407,26 @@ export function checkPageModalState(onModalClosed?: () => void): void {
       removeBadge(targetEl);
       continue;
     }
-    updateBadgePosition(targetEl);
+    updateBadgePosition(targetEl, activeModals);
   }
 }
 
-export function updateBadgePosition(targetEl: HTMLElement): void {
+export function updateBadgePosition(targetEl: HTMLElement, activeModals?: HTMLElement[]): void {
   const entry = badgeRegistry.get(targetEl);
   if (!entry) return;
 
-  entry.badgeEl.style.display = '';
+  const modals = activeModals ?? getActiveModalElements();
+  const isModalActive = modals.length > 0 || isPageInModalState();
+  const isInsideModal = modals.length > 0 && isElementInsideActiveModal(targetEl, modals);
 
-  const rect = targetEl.getBoundingClientRect();
-  const hasDimensions = rect.width > 0 && rect.height > 0;
-  const isDisplayNone =
-    window.getComputedStyle(targetEl).display === 'none' ||
-    window.getComputedStyle(targetEl).visibility === 'hidden';
-
-  // Only hide popovers if the element is explicitly hidden or has 0 dimensions
-  if (!hasDimensions || isDisplayNone) {
-    hideRegionsForEntry(entry);
-    if (entry.badgeEl.matches(':popover-open')) {
-      try {
-        entry.badgeEl.hidePopover();
-      } catch (e) {}
-    }
-    if (entry.tooltipEl.matches(':popover-open')) {
-      try {
-        entry.tooltipEl.hidePopover();
-      } catch (e) {}
-    }
+  // If a modal/popover is active on the page, and this element is NOT inside it:
+  // HIDE the badge, tooltip, and regions so they do not stay visible in the top-layer!
+  if (isModalActive && !isInsideModal) {
+    hideBadgeForEntry(entry);
     return;
   }
 
-  // Ensure badge is open by default in top-layer
-  if (!entry.badgeEl.matches(':popover-open')) {
-    try {
-      entry.badgeEl.showPopover();
-    } catch (e) {}
-  }
-
-  // Synchronize region box coordinates and dimensions to remain 100% square
-  applyRegionPositions(targetEl, entry);
+  showBadgeForEntry(entry, targetEl);
 }
 
 export function injectLoadingBadge(targetEl: HTMLElement): void {
@@ -382,12 +515,18 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 
   badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName, regionEls: [] });
 
-  try {
-    badgeEl.showPopover();
-  } catch (e) {
-    console.warn('[Overlay] showPopover failed:', e);
+  const activeModals = getActiveModalElements();
+  const isModalActive = activeModals.length > 0 || isPageInModalState();
+  const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(targetEl, activeModals);
+
+  if (!isModalActive || isInsideModal) {
+    try {
+      badgeEl.showPopover();
+    } catch (e) {
+      console.warn('[Overlay] showPopover failed:', e);
+    }
   }
-  updateBadgePosition(targetEl);
+  updateBadgePosition(targetEl, activeModals);
 }
 
 export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
@@ -404,10 +543,16 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   entry.patches = result.patchScores;
   entry.result = result;
 
-  if (!badgeEl.matches(':popover-open')) {
-    try {
-      badgeEl.showPopover();
-    } catch (e) {}
+  const activeModals = getActiveModalElements();
+  const isModalActive = activeModals.length > 0 || isPageInModalState();
+  const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(targetEl, activeModals);
+
+  if (!isModalActive || isInsideModal) {
+    if (!badgeEl.matches(':popover-open')) {
+      try {
+        badgeEl.showPopover();
+      } catch (e) {}
+    }
   }
 
   const scorePercent = Math.round(result.aiScore * 100);
@@ -666,10 +811,10 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     });
   }
 
-  updateBadgePosition(targetEl);
+  updateBadgePosition(targetEl, activeModals);
 }
 
-export function removeBadge(targetEl: HTMLElement): void {
+export function removeBadge(targetEl: HTMLElement, keepProcessedState = false): void {
   const entry = badgeRegistry.get(targetEl);
   if (entry) {
     hideRegionsForEntry(entry);
@@ -698,5 +843,7 @@ export function removeBadge(targetEl: HTMLElement): void {
   targetEl.style.removeProperty('anchor-name');
   delete targetEl.dataset.aiDetectorAnchor;
   delete targetEl.dataset.aiDetectorBadgeInjected;
-  delete targetEl.dataset.aiDetectorProcessed;
+  if (!keepProcessedState) {
+    delete targetEl.dataset.aiDetectorProcessed;
+  }
 }

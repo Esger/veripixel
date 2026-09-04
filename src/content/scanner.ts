@@ -5,7 +5,8 @@ import {
   updateBadgePosition,
   checkPageModalState,
   getActiveModalElements,
-  isElementInsideActiveModal
+  isElementInsideActiveModal,
+  isDetectorElement
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
@@ -124,12 +125,19 @@ async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
   return null;
 }
 
+const inFlightUrls = new Set<string>();
+
 async function processElement(el: HTMLElement): Promise<void> {
   if (!isExtensionContextValid()) {
     return;
   }
 
-  if (el.dataset.aiDetectorProcessed === 'true') {
+  // Do not process or queue images while the tab is inactive/hidden
+  if (document.visibilityState === 'hidden') {
+    return;
+  }
+
+  if (el.dataset.aiDetectorProcessed === 'true' || el.dataset.aiDetectorProcessed === 'analyzing') {
     return;
   }
 
@@ -137,7 +145,12 @@ async function processElement(el: HTMLElement): Promise<void> {
   if (el instanceof HTMLImageElement && (!el.complete || (el.naturalWidth === 0 && el.width === 0))) {
     const onLoad = () => {
       el.removeEventListener('load', onLoad);
-      processElement(el);
+      const inVp = isElementInViewport(el);
+      const activeModals = getActiveModalElements();
+      const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+      if (inVp || isInsideModal) {
+        processElement(el);
+      }
     };
     el.addEventListener('load', onLoad);
     return;
@@ -150,23 +163,32 @@ async function processElement(el: HTMLElement): Promise<void> {
     return;
   }
 
-  el.dataset.aiDetectorProcessed = 'true';
-  injectLoadingBadge(el);
-
   const imageUrl = getElementImageUrl(el);
   if (!imageUrl) {
     removeBadge(el);
     return;
   }
 
+  // Avoid duplicate in-flight requests for identical images
+  if (inFlightUrls.has(imageUrl)) {
+    return;
+  }
+
+  el.dataset.aiDetectorProcessed = 'analyzing';
+  injectLoadingBadge(el);
+  inFlightUrls.add(imageUrl);
+
   const activeModals = getActiveModalElements();
   const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
-  const priority = isInsideModal ? 'high' : 'normal';
+  const inViewport = isElementInViewport(el);
+  const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
 
   const sendDataUrlAnalysis = async () => {
     const dataUrl = await extractImageDataUrl(el);
     if (!dataUrl || !isExtensionContextValid()) {
-      removeBadge(el);
+      inFlightUrls.delete(imageUrl);
+      el.dataset.aiDetectorProcessed = 'failed';
+      removeBadge(el, true);
       return;
     }
 
@@ -179,23 +201,32 @@ async function processElement(el: HTMLElement): Promise<void> {
           isModal: isInsideModal
         } as ExtensionMessage,
         (response) => {
+          inFlightUrls.delete(imageUrl);
           if (!isExtensionContextValid() || chrome.runtime.lastError) {
-            removeBadge(el);
+            el.dataset.aiDetectorProcessed = 'failed';
+            removeBadge(el, true);
             return;
           }
           if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
             if (response.result.status === 'complete') {
               injectImageBadge(el, response.result);
+              el.dataset.aiDetectorProcessed = 'true';
+            } else if (response.result.status === 'pending') {
+              el.dataset.aiDetectorProcessed = 'pending';
             } else {
-              removeBadge(el);
+              el.dataset.aiDetectorProcessed = 'failed';
+              removeBadge(el, true);
             }
           } else {
-            removeBadge(el);
+            el.dataset.aiDetectorProcessed = 'failed';
+            removeBadge(el, true);
           }
         }
       );
     } catch {
-      removeBadge(el);
+      inFlightUrls.delete(imageUrl);
+      el.dataset.aiDetectorProcessed = 'failed';
+      removeBadge(el, true);
     }
   };
 
@@ -207,7 +238,8 @@ async function processElement(el: HTMLElement): Promise<void> {
 
   try {
     if (!isExtensionContextValid()) {
-      removeBadge(el);
+      inFlightUrls.delete(imageUrl);
+      removeBadge(el, true);
       return;
     }
 
@@ -219,18 +251,21 @@ async function processElement(el: HTMLElement): Promise<void> {
         isModal: isInsideModal
       } as ExtensionMessage,
       async (response) => {
+        inFlightUrls.delete(imageUrl);
         if (!isExtensionContextValid() || chrome.runtime.lastError) {
-          removeBadge(el);
+          el.dataset.aiDetectorProcessed = 'failed';
+          removeBadge(el, true);
           return;
         }
 
         if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
           if (response.result.status === 'complete') {
             injectImageBadge(el, response.result);
+            el.dataset.aiDetectorProcessed = 'true';
+          } else if (response.result.status === 'pending') {
+            el.dataset.aiDetectorProcessed = 'pending';
           } else if (response.result.status === 'error') {
             const errStr = String(response.result.error || '');
-            // Only attempt data URL extraction fallback in case of CORS / network fetch failure.
-            // Do NOT retry if the failure was a timeout or cancellation to prevent retry loops.
             if (
               !errStr.includes('timed out') &&
               !errStr.includes('cancelled') &&
@@ -238,34 +273,42 @@ async function processElement(el: HTMLElement): Promise<void> {
             ) {
               await sendDataUrlAnalysis();
             } else {
-              removeBadge(el);
+              el.dataset.aiDetectorProcessed = 'failed';
+              removeBadge(el, true);
             }
           } else {
-            removeBadge(el);
+            el.dataset.aiDetectorProcessed = 'failed';
+            removeBadge(el, true);
           }
         } else {
-          removeBadge(el);
+          el.dataset.aiDetectorProcessed = 'failed';
+          removeBadge(el, true);
         }
       }
     );
   } catch (err) {
-    removeBadge(el);
+    inFlightUrls.delete(imageUrl);
+    el.dataset.aiDetectorProcessed = 'failed';
+    removeBadge(el, true);
   }
 }
 
-// Intersection Observer for lazy scanning
+// Intersection Observer for lazy scanning (50px tight margin so only genuinely visible images scan)
 const observer = new IntersectionObserver(
   (entries) => {
     if (!isExtensionContextValid()) return;
+    if (document.visibilityState === 'hidden') return;
     for (const entry of entries) {
       if (entry.isIntersecting && entry.target instanceof HTMLElement) {
-        processElement(entry.target);
+        if (!entry.target.dataset.aiDetectorProcessed || entry.target.dataset.aiDetectorProcessed === 'pending') {
+          processElement(entry.target);
+        }
       }
     }
   },
   {
     root: null,
-    rootMargin: '200px',
+    rootMargin: '50px',
     threshold: 0.01
   }
 );
@@ -275,9 +318,14 @@ const resizeObserver = new ResizeObserver((entries) => {
   if (!isExtensionContextValid()) return;
   for (const entry of entries) {
     const target = entry.target as HTMLElement;
-    if (!target.dataset.aiDetectorProcessed) {
+    if (!target.dataset.aiDetectorProcessed || target.dataset.aiDetectorProcessed === 'pending') {
       if (isValidTargetElement(target)) {
-        processElement(target);
+        const inViewport = isElementInViewport(target);
+        const activeModals = getActiveModalElements();
+        const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(target, activeModals);
+        if (inViewport || isInsideModal) {
+          processElement(target);
+        }
       }
     } else {
       if (!isValidTargetElement(target)) {
@@ -300,9 +348,21 @@ function observeElement(el: HTMLElement, immediateCheck = false): void {
   observer.observe(el);
   resizeObserver.observe(el);
 
-  if (immediateCheck && !el.dataset.aiDetectorProcessed) {
+  if (immediateCheck && (!el.dataset.aiDetectorProcessed || el.dataset.aiDetectorProcessed === 'pending')) {
     processElement(el);
   }
+}
+
+function isElementInViewport(el: HTMLElement): boolean {
+  const rect = el.getBoundingClientRect();
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    rect.top < window.innerHeight &&
+    rect.bottom > 0 &&
+    rect.left < window.innerWidth &&
+    rect.right > 0
+  );
 }
 
 const TARGET_IMAGE_SELECTOR =
@@ -310,26 +370,40 @@ const TARGET_IMAGE_SELECTOR =
 
 function scanDOM(): void {
   if (!isExtensionContextValid()) return;
+  if (document.visibilityState === 'hidden') return;
 
-  const elements = document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR);
-  elements.forEach((el) => {
-    const bg = el instanceof HTMLImageElement ? '' : window.getComputedStyle(el).backgroundImage;
-    if (el instanceof HTMLImageElement || (bg && bg !== 'none')) {
-      if (!isValidTargetElement(el)) {
-        if (el.dataset.aiDetectorProcessed) {
-          removeBadge(el);
-        }
-        return;
-      }
+  const elements = Array.from(document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR));
+  const visibleElements: HTMLElement[] = [];
+  const offscreenElements: HTMLElement[] = [];
 
-      const rect = el.getBoundingClientRect();
-      const isVisibleInViewport =
-        rect.top < window.innerHeight &&
-        rect.bottom > 0 &&
-        rect.left < window.innerWidth &&
-        rect.right > 0;
-      observeElement(el, isVisibleInViewport);
+  for (const el of elements) {
+    if (!isValidTargetElement(el)) continue;
+    if (isElementInViewport(el)) {
+      visibleElements.push(el);
+    } else {
+      offscreenElements.push(el);
     }
+  }
+
+  // Sort visible elements top-to-bottom, left-to-right (visual reading order)
+  // This guarantees that all columns in multi-column CSS / masonry layouts (like Pixlr) are scanned in visual order
+  visibleElements.sort((a, b) => {
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    if (Math.abs(ra.top - rb.top) > 20) {
+      return ra.top - rb.top;
+    }
+    return ra.left - rb.left;
+  });
+
+  // Prioritize and immediately process visible elements in visual reading order
+  visibleElements.forEach((el) => {
+    observeElement(el, true);
+  });
+
+  // Observe offscreen elements for lazy scanning via IntersectionObserver
+  offscreenElements.forEach((el) => {
+    observeElement(el, false);
   });
 }
 
@@ -342,20 +416,27 @@ let modalCheckScheduled = false;
 function scheduleModalStateCheck(): void {
   if (modalCheckScheduled) return;
   modalCheckScheduled = true;
-  scheduleIdleTask(() => {
+  requestAnimationFrame(() => {
     modalCheckScheduled = false;
     handleModalStateCheck();
   });
 }
 
 let scanScheduled = false;
-function scheduleScanDOM(): void {
+function scheduleScanDOM(immediate = false): void {
   if (scanScheduled) return;
   scanScheduled = true;
-  scheduleIdleTask(() => {
-    scanScheduled = false;
-    scanDOM();
-  });
+  if (immediate) {
+    requestAnimationFrame(() => {
+      scanScheduled = false;
+      scanDOM();
+    });
+  } else {
+    scheduleIdleTask(() => {
+      scanScheduled = false;
+      scanDOM();
+    });
+  }
 }
 
 function handleModalStateCheck(): void {
@@ -365,30 +446,33 @@ function handleModalStateCheck(): void {
   });
 }
 
-// Initial DOM Scan deferred to browser idle time
-scheduleScanDOM();
+// Initial DOM Scan scheduled on next animation frame
+scheduleScanDOM(true);
 scheduleModalStateCheck();
 
-// MutationObserver for dynamically added nodes AND src/srcset/style/class attribute changes (modals)
+// Non-blocking MutationObserver that avoids forced synchronous style recalcs
 const mutationObserver = new MutationObserver((mutations) => {
   if (!isExtensionContextValid()) return;
+  if (document.visibilityState === 'hidden') return;
+
+  let shouldRescan = false;
 
   for (const mutation of mutations) {
     if (mutation.type === 'childList') {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof HTMLElement) {
-          const bg = node instanceof HTMLImageElement ? '' : window.getComputedStyle(node).backgroundImage;
-          if (node instanceof HTMLImageElement || (bg && bg !== 'none')) {
-            if (isValidTargetElement(node)) {
-              observeElement(node, true);
-            }
+          if (isDetectorElement(node)) {
+            return;
           }
+          shouldRescan = true;
+          scheduleModalStateCheck();
+          if (isValidTargetElement(node)) {
+            observeElement(node, isElementInViewport(node));
+          }
+          // In case a container card was added (e.g. <a class="community-item"><img></a>)
           node.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR).forEach((child) => {
-            const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
-            if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
-              if (isValidTargetElement(child)) {
-                observeElement(child, true);
-              }
+            if (isValidTargetElement(child)) {
+              observeElement(child, isElementInViewport(child));
             }
           });
         }
@@ -396,53 +480,67 @@ const mutationObserver = new MutationObserver((mutations) => {
 
       mutation.removedNodes.forEach((node) => {
         if (node instanceof HTMLElement) {
-          removeBadge(node);
-          node.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR).forEach((child) => {
-            removeBadge(child);
-          });
+          if (node.dataset?.aiDetectorProcessed) {
+            removeBadge(node);
+          }
+          scheduleModalStateCheck();
         }
       });
     } else if (mutation.type === 'attributes') {
-      if (mutation.target instanceof HTMLElement) {
-        const target = mutation.target;
-        const isTargetImage = target instanceof HTMLImageElement || window.getComputedStyle(target).backgroundImage !== 'none';
-        if (isTargetImage) {
+      const target = mutation.target as HTMLElement;
+      if (isDetectorElement(target)) {
+        continue;
+      }
+
+      if (
+        mutation.attributeName === 'src' ||
+        mutation.attributeName === 'srcset' ||
+        mutation.attributeName === 'data-src'
+      ) {
+        if (target instanceof HTMLImageElement) {
           delete target.dataset.aiDetectorProcessed;
           if (isValidTargetElement(target)) {
-            observeElement(target, true);
-          } else {
-            removeBadge(target);
+            observeElement(target, isElementInViewport(target));
           }
         }
-        // Deep scan when modal containers change class/style/open
-        target.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR).forEach((child) => {
-          const childBg = child instanceof HTMLImageElement ? '' : window.getComputedStyle(child).backgroundImage;
-          if (child instanceof HTMLImageElement || (childBg && childBg !== 'none')) {
-            if (isValidTargetElement(child)) {
-              observeElement(child, true);
-            } else {
-              removeBadge(child);
-            }
-          }
-        });
+      } else if (
+        mutation.attributeName === 'open' ||
+        mutation.attributeName === 'aria-modal' ||
+        mutation.attributeName === 'aria-hidden' ||
+        mutation.attributeName === 'class' ||
+        mutation.attributeName === 'style' ||
+        mutation.attributeName === 'hidden' ||
+        mutation.attributeName === 'data-state' ||
+        mutation.attributeName === 'role'
+      ) {
+        scheduleModalStateCheck();
+        if (
+          mutation.attributeName === 'open' ||
+          mutation.attributeName === 'aria-modal' ||
+          mutation.attributeName === 'data-state'
+        ) {
+          shouldRescan = true;
+        }
       }
     }
   }
 
-  // Debounced modal state check to prevent layout thrashing
-  scheduleModalStateCheck();
+  if (shouldRescan) {
+    scheduleModalStateCheck();
+    scheduleScanDOM(true);
+  }
 });
 
 mutationObserver.observe(document.body, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ['src', 'srcset', 'data-src', 'style', 'class', 'open', 'hidden', 'aria-modal']
+  attributeFilter: ['src', 'srcset', 'data-src', 'style', 'class', 'open', 'hidden', 'aria-modal', 'aria-hidden', 'data-state', 'role']
 });
 
 mutationObserver.observe(document.documentElement, {
   attributes: true,
-  attributeFilter: ['class', 'style']
+  attributeFilter: ['class', 'style', 'data-state']
 });
 
 // Event listeners to instantly detect page popover and dialog openings/closures
@@ -450,7 +548,7 @@ document.addEventListener(
   'toggle',
   (e) => {
     const target = e.target as HTMLElement;
-    if (target && !target.classList.contains('detectorBadge') && !target.classList.contains('detectorTooltip')) {
+    if (target && !isDetectorElement(target)) {
       scheduleModalStateCheck();
     }
   },
@@ -470,6 +568,8 @@ document.addEventListener(
   (e) => {
     if (e.key === 'Escape') {
       scheduleModalStateCheck();
+      setTimeout(scheduleModalStateCheck, 100);
+      setTimeout(scheduleModalStateCheck, 300);
     }
   },
   true
@@ -481,10 +581,38 @@ document.addEventListener(
   () => {
     if (!isExtensionContextValid()) return;
     scheduleModalStateCheck();
+    setTimeout(scheduleModalStateCheck, 100);
+    setTimeout(scheduleModalStateCheck, 300);
     scheduleScanDOM();
   },
   { passive: true }
 );
+
+// CSS animation/transition completion hooks for animated modals
+document.addEventListener(
+  'transitionend',
+  (e) => {
+    const target = e.target as HTMLElement;
+    if (target && !isDetectorElement(target)) {
+      scheduleModalStateCheck();
+    }
+  },
+  true
+);
+
+document.addEventListener(
+  'animationend',
+  (e) => {
+    const target = e.target as HTMLElement;
+    if (target && !isDetectorElement(target)) {
+      scheduleModalStateCheck();
+    }
+  },
+  true
+);
+
+window.addEventListener('resize', scheduleModalStateCheck, { passive: true });
+window.addEventListener('popstate', scheduleModalStateCheck, { passive: true });
 
 // Rescan DOM whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {

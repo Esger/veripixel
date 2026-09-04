@@ -94,10 +94,13 @@ export type ExtensionMessage =
     }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
   | { type: 'CANCEL_BACKGROUND_ANALYSIS' }
+  | { type: 'SET_ACTIVE_TAB'; activeTabId: number }
+  | { type: 'CANCEL_TAB_TASKS'; tabId: number }
   | {
       type: 'PROCESS_IMAGE_URL';
       imageUrl: string;
-      priority?: 'high' | 'normal';
+      tabId?: number;
+      priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'standard' | 'deep';
     }
@@ -106,7 +109,8 @@ export type ExtensionMessage =
       imageUrl: string;
       buffer: number[];
       contentType: string;
-      priority?: 'high' | 'normal';
+      tabId?: number;
+      priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'standard' | 'deep';
     }
@@ -123,7 +127,8 @@ export type ExtensionMessage =
       imageUrl: string;
       buffer: number[];
       contentType: string;
-      priority?: 'high' | 'normal';
+      tabId?: number;
+      priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'standard' | 'deep';
       forceRescan?: boolean;

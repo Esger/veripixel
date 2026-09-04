@@ -21,43 +21,87 @@ console.error = (...args: any[]) => {
 console.log('[Offscreen] Document script active.');
 
 interface QueuedTask {
+  tabId?: number;
   run: () => void;
   cancel: () => void;
-  priority: 'high' | 'normal';
+  priority: 'high' | 'normal' | 'background';
   isModal: boolean;
+  enqueuedAt: number;
 }
 
-// Queue concurrency limiter with priority queueing and graceful cancellation
+// Queue concurrency limiter with active tab priority, bounded buffer, and graceful cancellation
 class PriorityConcurrencyQueue {
   private active = 0;
   private queue: QueuedTask[] = [];
+  private activeTabId: number | null = null;
 
   constructor(
     private maxConcurrent = 1,
-    private maxBackgroundQueue = 6
+    private maxQueue = 50
   ) {}
+
+  setActiveTab(tabId: number): void {
+    this.activeTabId = tabId;
+    this.reSortQueue();
+    console.log(`[Offscreen Queue] Active tab set to ${tabId}, re-sorted ${this.queue.length} tasks`);
+  }
+
+  cancelTasksForTab(tabId: number): void {
+    const remaining: QueuedTask[] = [];
+    let cancelledCount = 0;
+    for (const item of this.queue) {
+      if (item.tabId === tabId) {
+        item.cancel();
+        cancelledCount++;
+      } else {
+        remaining.push(item);
+      }
+    }
+    this.queue = remaining;
+    if (cancelledCount > 0) {
+      console.log(`[Offscreen Queue] Cancelled ${cancelledCount} pending tasks for tab ${tabId}`);
+    }
+  }
+
+  private getScore(task: QueuedTask): number {
+    if (task.isModal) return 1000;
+    if (task.priority === 'high') return 800;
+    if (task.tabId !== undefined && this.activeTabId !== null && task.tabId === this.activeTabId) {
+      return 500; // Active tab tasks jump ahead of background tabs
+    }
+    if (task.priority === 'normal') return 300;
+    return 100; // Background tab task
+  }
+
+  private reSortQueue(): void {
+    this.queue.sort((a, b) => {
+      const scoreDiff = this.getScore(b) - this.getScore(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.enqueuedAt - b.enqueuedAt;
+    });
+  }
 
   async run<T>(
     task: () => Promise<T>,
-    priority: 'high' | 'normal' = 'normal',
-    isModal = false
+    priority: 'high' | 'normal' | 'background' = 'normal',
+    isModal = false,
+    tabId?: number
   ): Promise<T | null> {
     if (this.active >= this.maxConcurrent) {
       const waitPromise = new Promise<boolean>((resolve) => {
         const item: QueuedTask = {
+          tabId,
           run: () => resolve(true),
           cancel: () => resolve(false),
           priority,
-          isModal
+          isModal,
+          enqueuedAt: Date.now()
         };
-        if (priority === 'high' || isModal) {
-          // Modal / high priority requests cancel background queue and jump to front
-          this.cancelBackgroundTasks();
-          this.queue.unshift(item);
-        } else {
-          // Bounded background queue: drop oldest background task if queue depth is exceeded
-          const bgTasks = this.queue.filter((t) => t.priority !== 'high' && !t.isModal);
-          if (bgTasks.length >= this.maxBackgroundQueue) {
+
+        // If queue exceeds maxQueue, prune the oldest low-priority background task
+        if (this.queue.length >= this.maxQueue) {
+          const bgTasks = this.queue.filter((t) => this.getScore(t) <= 100);
+          if (bgTasks.length > 0) {
             const oldest = bgTasks[0];
             const idx = this.queue.indexOf(oldest);
             if (idx !== -1) {
@@ -65,8 +109,10 @@ class PriorityConcurrencyQueue {
               oldest.cancel();
             }
           }
-          this.queue.push(item);
         }
+
+        this.queue.push(item);
+        this.reSortQueue();
       });
 
       const proceed = await waitPromise;
@@ -212,7 +258,8 @@ async function processImageBuffer(
   imageUrl: string,
   buffer: number[],
   contentType = 'image/jpeg',
-  priority: 'high' | 'normal' = 'normal',
+  tabId?: number,
+  priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
   sampleMode: 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
@@ -285,14 +332,16 @@ async function processImageBuffer(
       };
     },
     priority,
-    isModal
+    isModal,
+    tabId
   );
 }
 
 // Process an incoming image URL directly in offscreen without IPC serialization overhead
 async function processImageUrl(
   imageUrl: string,
-  priority: 'high' | 'normal' = 'normal',
+  tabId?: number,
+  priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
   sampleMode: 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
@@ -373,7 +422,8 @@ async function processImageUrl(
       };
     },
     priority,
-    isModal
+    isModal,
+    tabId
   );
 }
 
@@ -382,9 +432,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'PING_OFFSCREEN') {
     sendResponse({ status: 'pong' });
     return false;
+  } else if (message.type === 'SET_ACTIVE_TAB') {
+    queue.setActiveTab(message.activeTabId);
+    sendResponse({ status: 'ok' });
+    return false;
+  } else if (message.type === 'CANCEL_TAB_TASKS') {
+    queue.cancelTasksForTab(message.tabId);
+    sendResponse({ status: 'ok' });
+    return false;
   } else if (message.type === 'PROCESS_IMAGE_URL') {
     processImageUrl(
       message.imageUrl,
+      message.tabId,
       message.priority || 'normal',
       message.isModal || false,
       message.sampleMode || 'standard'
@@ -405,6 +464,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.imageUrl,
       message.buffer,
       message.contentType,
+      message.tabId,
       message.priority || 'normal',
       message.isModal || false,
       message.sampleMode || 'standard'
