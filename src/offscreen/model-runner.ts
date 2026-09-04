@@ -1,8 +1,12 @@
-import * as ort from 'onnxruntime-web/all';
+import * as ort from 'onnxruntime-web';
 import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
 
 // Configure ONNX WASM path and safe multi-threading relative to extension root
-ort.env.wasm.wasmPaths = '/assets/';
+if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+  ort.env.wasm.wasmPaths = chrome.runtime.getURL('assets/');
+} else {
+  ort.env.wasm.wasmPaths = '/assets/';
+}
 ort.env.logLevel = 'error';
 ort.env.wasm.numThreads =
   typeof SharedArrayBuffer !== 'undefined'
@@ -170,13 +174,22 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
         return null;
       }
 
-      console.log('[ModelRunner] Initializing ONNX InferenceSession with WebGPU / WASM...');
+      console.log('[ModelRunner] Initializing ONNX InferenceSession with WASM SIMD...');
       const session = await ort.InferenceSession.create(modelBuffer, {
-        executionProviders: ['webgpu', 'wasm'],
+        executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
-        logSeverityLevel: 3 // Suppress warnings (0=verbose, 1=info, 2=warning, 3=error, 4=fatal)
+        logSeverityLevel: 3 // Suppress internal ONNX warnings
       });
-      console.log('[ModelRunner] ONNX InferenceSession successfully loaded.');
+
+      // Warm up session with a 1-patch dummy tensor to preallocate WASM memory & graph execution structures
+      try {
+        const dummyInput = new ort.Tensor('float32', new Float32Array(1 * 3 * 224 * 224), [1, 3, 224, 224]);
+        await session.run({ [session.inputNames[0]]: dummyInput });
+        console.log('[ModelRunner] ONNX InferenceSession successfully warmed up (WASM SIMD).');
+      } catch (warmupErr) {
+        console.warn('[ModelRunner] Session warmup notice:', warmupErr);
+      }
+
       return session;
     } catch (err) {
       console.error('[ModelRunner] Error creating ONNX InferenceSession:', err);
@@ -271,7 +284,9 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
         for (let i = 0; i < totalItems; i++) {
           scores.push(parseLogitsToScore(outputData, i, classesPerItem));
         }
-        console.log(`[ModelRunner] Batched inference completed for ${totalItems} patches in ${Date.now() - tStart}ms`);
+        console.log(
+          `[ModelRunner] Batched inference completed for ${totalItems} patches in ${Date.now() - tStart}ms (Scores: [${scores.join(', ')}])`
+        );
         return scores;
       } catch (batchErr) {
         console.warn('[ModelRunner] Batched inference rejected by model graph, falling back to sequential patches:', batchErr);
@@ -286,16 +301,18 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
           const outputData = results[outputName].data as Float32Array;
           individualScores.push(parseLogitsToScore(outputData, 0, outputData.length));
         }
-        console.log(`[ModelRunner] Sequential patch inference completed in ${Date.now() - tStart}ms`);
+        console.log(
+          `[ModelRunner] Sequential patch inference completed in ${Date.now() - tStart}ms (Scores: [${individualScores.join(', ')}])`
+        );
         return individualScores;
       }
     })();
 
     const timeoutPromise = new Promise<number[]>((resolve) => {
       setTimeout(() => {
-        console.warn(`[ModelRunner] Patch inference timed out (30s for ${patchCanvases.length} patches), using fallback heuristic`);
+        console.warn(`[ModelRunner] Patch inference timed out (15s for ${patchCanvases.length} patches), using fallback heuristic`);
         resolve(patchCanvases.map(computeFallbackScore));
-      }, 30000);
+      }, 15000);
     });
 
     return await Promise.race([inferencePromise, timeoutPromise]);
