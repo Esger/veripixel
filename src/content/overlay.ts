@@ -14,404 +14,6 @@ interface BadgeEntry {
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
 let prevModalOpen = false;
 
-function ensureGlobalStyles(): void {
-  if (document.getElementById('ai-detector-top-layer-styles')) return;
-
-  const styleEl = document.createElement('style');
-  styleEl.id = 'ai-detector-top-layer-styles';
-  styleEl.textContent = `
-    @keyframes cycleColors {
-      0% { background-color: #10B981; box-shadow: 0 0 6px #10B981; }
-      33% { background-color: #F59E0B; box-shadow: 0 0 6px #F59E0B; }
-      66% { background-color: #EF4444; box-shadow: 0 0 6px #EF4444; }
-      100% { background-color: #10B981; box-shadow: 0 0 6px #10B981; }
-    }
-
-    .detectorBadge {
-      position: fixed;
-      position-anchor: var(--badge-anchor);
-      inset: auto;
-      bottom: calc(anchor(bottom) + 6px);
-      right: calc(anchor(right) + 6px);
-      position-visibility: anchors-visible;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 8px;
-      border-radius: 12px;
-      background: rgba(15, 23, 42, 0.85);
-      backdrop-filter: blur(8px);
-      color: #FFFFFF;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 11px;
-      font-weight: 600;
-      border: 1px solid #64748B;
-      cursor: pointer;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-      transition: transform 0.15s ease, border-color 0.3s ease;
-      user-select: none;
-      margin: 0;
-      z-index: 2147483640;
-    }
-
-    .detectorBadge:hover {
-      transform: scale(1.05);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-
-    .detectorBadge__dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background-color: #10B981;
-      box-shadow: 0 0 6px #10B981;
-    }
-
-    .detectorBadge__dot--loading {
-      animation: cycleColors 1.2s infinite linear;
-    }
-
-    .detectorBadge__scoreText {
-      color: #FFFFFF;
-    }
-
-    /* CSS Anchor Positioning @position-try fallbacks to keep tooltip clear of sample regions */
-    @position-try --tooltip-below {
-      top: calc(anchor(bottom) + 8px);
-      bottom: auto;
-      right: calc(anchor(right) + 6px);
-      left: auto;
-    }
-
-    @position-try --tooltip-above {
-      top: auto;
-      bottom: calc(anchor(top) + 8px);
-      right: calc(anchor(right) + 6px);
-      left: auto;
-    }
-
-    @position-try --tooltip-left-of-image {
-      top: auto;
-      bottom: calc(anchor(bottom) + 6px);
-      right: calc(anchor(left) + 8px);
-      left: auto;
-    }
-
-    @position-try --tooltip-right-of-image {
-      top: auto;
-      bottom: calc(anchor(bottom) + 6px);
-      left: calc(anchor(right) + 8px);
-      right: auto;
-    }
-
-    @position-try --tooltip-inside-shifted-left {
-      top: auto;
-      bottom: calc(anchor(bottom) + 6px);
-      right: calc(anchor(right) + 240px);
-      left: auto;
-    }
-
-    .detectorTooltip {
-      position: fixed;
-      position-anchor: var(--badge-anchor);
-      inset: auto;
-      /* Default preferred position: Outside below the image, clear of all sample regions */
-      top: calc(anchor(bottom) + 8px);
-      right: calc(anchor(right) + 6px);
-      position-try-fallbacks:
-        --tooltip-above,
-        --tooltip-left-of-image,
-        --tooltip-right-of-image,
-        --tooltip-inside-shifted-left,
-        flip-block;
-      position-visibility: anchors-visible;
-      margin: 0;
-      padding: 12px;
-      border: 1px solid #334155;
-      border-radius: 10px;
-      background: #0F172A;
-      color: #F8FAFC;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 12px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      width: 260px;
-      z-index: 2147483647;
-    }
-
-    .detectorTooltip__header {
-      font-weight: 700;
-      font-size: 13px;
-      margin-bottom: 6px;
-      display: flex;
-      justify-content: space-between;
-    }
-
-    .detectorTooltip__row {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 4px;
-      font-size: 11px;
-      color: #94A3B8;
-    }
-
-    .detectorTooltip__val {
-      color: #E2E8F0;
-      font-weight: 500;
-    }
-
-    .detectorTooltip__patchesGrid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 4px;
-      margin-top: 8px;
-      padding-top: 6px;
-      border-top: 1px solid #1E293B;
-    }
-
-    .detectorTooltip__patchesGrid--2Cols {
-      grid-template-columns: 1fr 1fr;
-    }
-
-    .detectorTooltip__patchesGrid--3Cols {
-      grid-template-columns: 1fr 1fr 1fr;
-    }
-
-    .detectorTooltip__patchItem {
-      background: #1E293B;
-      padding: 4px 6px;
-      border-radius: 4px;
-      font-size: 10px;
-      text-align: center;
-      cursor: pointer;
-      transition: background 0.15s ease, transform 0.15s ease;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .detectorTooltip__patchesGrid--3Cols .detectorTooltip__patchItem {
-      font-size: 9px;
-      padding: 3px 4px;
-    }
-
-    .detectorTooltip__patchItem:hover {
-      background: #334155;
-      transform: translateY(-1px);
-    }
-
-    /* Forensic Reasoning Assessment Card */
-    .detectorTooltip__assessment {
-      margin-top: 8px;
-      padding: 7px 9px;
-      border-radius: 6px;
-      background: rgba(30, 41, 59, 0.75);
-      border-left: 3px solid #64748B;
-      box-sizing: border-box;
-    }
-
-    .detectorTooltip__assessment--localized {
-      border-left-color: #A855F7;
-      background: rgba(168, 85, 247, 0.12);
-    }
-
-    .detectorTooltip__assessment--synthetic {
-      border-left-color: #EF4444;
-      background: rgba(239, 68, 68, 0.12);
-    }
-
-    .detectorTooltip__assessment--real {
-      border-left-color: #10B981;
-      background: rgba(16, 185, 129, 0.12);
-    }
-
-    .detectorTooltip__assessment--ambiguous {
-      border-left-color: #F59E0B;
-      background: rgba(245, 158, 11, 0.12);
-    }
-
-    .detectorTooltip__assessmentHeader {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      font-weight: 700;
-      color: #F8FAFC;
-      font-size: 11px;
-      margin-bottom: 3px;
-    }
-
-    .detectorTooltip__assessmentIcon {
-      font-size: 12px;
-      flex-shrink: 0;
-    }
-
-    .detectorTooltip__assessmentDesc {
-      color: #CBD5E1;
-      font-size: 10px;
-      line-height: 1.35;
-    }
-
-    .detectorTooltip__sampleToggleBtn {
-      width: 100%;
-      margin-top: 10px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      border: 1px solid #3B82F6;
-      background: rgba(59, 130, 246, 0.15);
-      color: #93C5FD;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: background 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
-    }
-
-    .detectorTooltip__sampleToggleBtn:hover {
-      background: rgba(59, 130, 246, 0.3);
-      border-color: #60A5FA;
-      transform: translateY(-1px);
-    }
-
-    .detectorTooltip__sampleToggleBtn:active {
-      transform: translateY(0);
-    }
-
-    .detectorTooltip__sampleToggleBtn--active {
-      background: rgba(16, 185, 129, 0.2);
-      border-color: #10B981;
-      color: #6EE7B7;
-    }
-
-    .detectorTooltip__sampleToggleBtn--loading {
-      opacity: 0.7;
-      cursor: wait;
-    }
-
-    /* Wrapper matches the target element bounds and clips any overflow */
-    .detectorRegionsWrapper {
-      position: fixed;
-      position-anchor: var(--badge-anchor);
-      inset: auto;
-      top: anchor(top);
-      left: anchor(left);
-      width: anchor-size(width);
-      height: anchor-size(height);
-      position-visibility: anchors-visible;
-      pointer-events: none;
-      overflow: hidden;
-      margin: 0;
-      padding: 0;
-      border: none;
-      background: transparent;
-      z-index: 2147483642;
-      box-sizing: border-box;
-      border-radius: inherit;
-    }
-
-    /* Container mimics the real unclipped image size and position using Flexbox space-around */
-    .detectorRegions {
-      position: absolute;
-      top: var(--image-offset-y, 0px);
-      left: var(--image-offset-x, 0px);
-      width: var(--image-width, 100%);
-      height: var(--image-height, 100%);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-around;
-      align-items: stretch;
-      pointer-events: none;
-      margin: 0;
-      padding: 0;
-      border: none;
-      background: transparent;
-      box-sizing: border-box;
-    }
-
-    /* Rows in flexbox space-around */
-    .detectorRegions__row {
-      display: flex;
-      flex-direction: row;
-      justify-content: space-around;
-      align-items: center;
-      width: 100%;
-      height: var(--region-size, 80px);
-      pointer-events: none;
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    /* Individual Region Outlines - Guaranteed 1:1 Square */
-    .detectorRegion {
-      position: relative;
-      width: var(--region-size, 80px);
-      height: var(--region-size, 80px);
-      aspect-ratio: 1 / 1;
-      flex-shrink: 0;
-      pointer-events: none;
-      border-radius: 6px;
-      border: 2px dashed #10B981;
-      background: rgba(16, 185, 129, 0.12);
-      box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      transition: opacity 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    .detectorRegion--highAi {
-      border-color: #EF4444;
-      background: rgba(239, 68, 68, 0.15);
-      box-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
-      color: #EF4444;
-    }
-
-    .detectorRegion--mediumAi {
-      border-color: #F59E0B;
-      background: rgba(245, 158, 11, 0.15);
-      box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
-      color: #F59E0B;
-    }
-
-    .detectorRegion--lowAi {
-      border-color: #10B981;
-      background: rgba(16, 185, 129, 0.12);
-      box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
-      color: #10B981;
-    }
-
-    .detectorRegion--highlighted {
-      border-width: 3px;
-      border-style: solid;
-      box-shadow: 0 0 20px currentColor;
-      transform: scale(1.04);
-      z-index: 10;
-    }
-
-    .detectorRegion__label {
-      position: absolute;
-      top: 4px;
-      left: 4px;
-      padding: 2px 5px;
-      border-radius: 4px;
-      background: rgba(15, 23, 42, 0.9);
-      color: #FFFFFF;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.2px;
-      backdrop-filter: blur(4px);
-      user-select: none;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-    }
-  `;
-
-  document.head.appendChild(styleEl);
-}
-
 function isElementVisible(el: HTMLElement): boolean {
   if (!el.isConnected) return false;
   const style = window.getComputedStyle(el);
@@ -432,7 +34,7 @@ function getRealImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageH
   const elH = rect.height;
 
   if (elW <= 0 || elH <= 0) {
-    return { elW, elH, displayW: elW, displayH: elH, offsetX: 0, offsetY: 0 };
+    return { elW, elH, displayW: elW, displayH: elH, offsetX: 0, offsetY: 0, naturalW: elW, naturalH: elH };
   }
 
   const naturalW = (targetEl instanceof HTMLImageElement ? targetEl.naturalWidth : 0) || imageWidth || elW;
@@ -485,12 +87,12 @@ function getRealImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageH
     }
   }
 
-  return { elW, elH, displayW, displayH, offsetX, offsetY };
+  return { elW, elH, displayW, displayH, offsetX, offsetY, naturalW, naturalH };
 }
 
 /**
  * Positions the wrapper over the target element, sizes the inner container
- * to mimic the real image size and offset, and lets CSS Grid handle all sample layout.
+ * to mimic the real image size and offset, and lets CSS Grid/Flexbox handle sample layout.
  */
 function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
   if (!entry.regionsWrapperEl || !entry.regionsContainerEl) return;
@@ -510,14 +112,14 @@ function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
   entry.regionsContainerEl.style.setProperty('--image-width', `${Math.round(geo.displayW)}px`);
   entry.regionsContainerEl.style.setProperty('--image-height', `${Math.round(geo.displayH)}px`);
 
-  // 3. Proportional sample square size (25% of min dimension, between 36px and 160px)
-  const minDim = Math.min(geo.displayW, geo.displayH);
-  const isDeep = entry.result?.sampleMode === 'deep';
-  const ratio = isDeep ? 0.22 : 0.25;
-  const squareSize = Math.max(36, Math.min(Math.round(minDim * ratio), 160));
-  entry.regionsContainerEl.style.setProperty('--region-size', `${squareSize}px`);
+  // 3. Render boxes at the exact sample size (224px native crop mapped to rendered display scale)
+  const naturalW = geo.naturalW || entry.result?.imageWidth || geo.displayW;
+  const scale = naturalW > 0 ? geo.displayW / naturalW : 1;
+  const sampleSize = Math.max(24, Math.round(224 * scale));
+  entry.regionsContainerEl.style.setProperty('--sample-size', `${sampleSize}px`);
+  entry.regionsContainerEl.style.setProperty('--region-size', `${sampleSize}px`);
 
-  // 4. Read the needed values from the rendered grid items so we have exact geometry
+  // 4. Read rendered values from DOM elements
   if (entry.regionsWrapperEl.matches(':popover-open')) {
     const wrapperRect = entry.regionsWrapperEl.getBoundingClientRect();
     entry.regionEls.forEach((regionEl) => {
@@ -698,8 +300,6 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   }
   targetEl.dataset.aiDetectorBadgeInjected = 'loading';
 
-  ensureGlobalStyles();
-
   // Generate unique anchor name for this image
   let anchorName = targetEl.dataset.aiDetectorAnchor;
   if (!anchorName) {
@@ -732,7 +332,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   tooltipEl.style.setProperty('--badge-anchor', anchorName);
   tooltipEl.style.setProperty('position-anchor', anchorName);
   tooltipEl.innerHTML = `
-    <div style="font-weight:600; color: #94A3B8;">Analyzing image with AI model...</div>
+    <div class="detectorTooltip__loading">Analyzing image with AI model...</div>
   `;
 
   const preventAndStop = (e: Event) => {
@@ -809,26 +409,25 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   }
 
   const scorePercent = Math.round(result.aiScore * 100);
-  let color = '#10B981'; // Green (<30%)
+  let statusModifier = 'lowAi';
   let statusText = 'Likely Real';
 
   if (scorePercent >= 70) {
-    color = '#EF4444'; // Red (>70%)
+    statusModifier = 'highAi';
     statusText = 'High AI Probability';
   } else if (scorePercent >= 30) {
-    color = '#F59E0B'; // Orange (30-70%)
+    statusModifier = 'mediumAi';
     statusText = 'Possible AI/Edited';
   }
 
-  badgeEl.style.borderColor = color;
+  badgeEl.classList.remove('detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
+  badgeEl.classList.add(`detectorBadge--${statusModifier}`);
 
   const dotEl = badgeEl.querySelector('.detectorBadge__dot') as HTMLElement | null;
   const scoreText = badgeEl.querySelector('.detectorBadge__scoreText') as HTMLElement | null;
 
   if (dotEl) {
     dotEl.classList.remove('detectorBadge__dot--loading');
-    dotEl.style.backgroundColor = color;
-    dotEl.style.boxShadow = `0 0 6px ${color}`;
   }
 
   if (scoreText) {
@@ -859,43 +458,72 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   containerEl.innerHTML = '';
   entry.regionEls = [];
 
+  const totalCount = result.patchScores.length;
   const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
   const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
   const isDeepActive = result.sampleMode === 'deep';
   const gridCols = currentGrid.cols;
-  const gridRows = currentGrid.rows;
 
-  // Create rows using pure Flexbox
-  for (let r = 0; r < gridRows; r++) {
-    const rowEl = document.createElement('div');
-    rowEl.className = 'detectorRegions__row';
-    containerEl.appendChild(rowEl);
+  containerEl.className = 'detectorRegions';
 
-    for (let c = 0; c < gridCols; c++) {
-      const idx = r * gridCols + c;
-      const patch = result.patchScores[idx];
-      if (!patch) continue;
+  const createRegionEl = (patch: PatchResult, idx: number): HTMLElement => {
+    const patchScorePercent = Math.round(patch.aiScore * 100);
+    let mod = 'lowAi';
+    if (patchScorePercent >= 70) {
+      mod = 'highAi';
+    } else if (patchScorePercent >= 30) {
+      mod = 'mediumAi';
+    }
 
-      const patchScorePercent = Math.round(patch.aiScore * 100);
+    const regionEl = document.createElement('div');
+    regionEl.className = `detectorRegion detectorRegion--${mod}`;
+    regionEl.dataset.patchIndex = String(idx);
 
-      let modifierClass = 'detectorRegion--lowAi';
-      let regionColor = '#10B981';
-      if (patchScorePercent >= 70) {
-        modifierClass = 'detectorRegion--highAi';
-        regionColor = '#EF4444';
-      } else if (patchScorePercent >= 30) {
-        modifierClass = 'detectorRegion--mediumAi';
-        regionColor = '#F59E0B';
-      }
+    const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
+    regionEl.innerHTML = `<span class="detectorRegion__label detectorRegion__label--${mod}">${formattedPos} (${patchScorePercent}%)</span>`;
 
-      const regionEl = document.createElement('div');
-      regionEl.className = `detectorRegion ${modifierClass}`;
+    return regionEl;
+  };
 
-      const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
-      regionEl.innerHTML = `<span class="detectorRegion__label" style="border-left: 3px solid ${regionColor}">${formattedPos} (${patchScorePercent}%)</span>`;
-
-      rowEl.appendChild(regionEl);
+  if (totalCount === 1) {
+    // 1 box: grid lines 50%
+    containerEl.classList.add('detectorRegions--1Box');
+    const regionEl = createRegionEl(result.patchScores[0], 0);
+    containerEl.appendChild(regionEl);
+    entry.regionEls.push(regionEl);
+  } else if (totalCount === 2) {
+    // 2 boxes: flex space-around / wrap
+    containerEl.classList.add('detectorRegions--2Boxes');
+    result.patchScores.forEach((patch, idx) => {
+      const regionEl = createRegionEl(patch, idx);
+      containerEl.appendChild(regionEl);
       entry.regionEls.push(regionEl);
+    });
+  } else if (totalCount === 4) {
+    // 4 boxes: grid-lines 1/3 (Rule of Thirds)
+    containerEl.classList.add('detectorRegions--4Boxes');
+    result.patchScores.forEach((patch, idx) => {
+      const regionEl = createRegionEl(patch, idx);
+      containerEl.appendChild(regionEl);
+      entry.regionEls.push(regionEl);
+    });
+  } else {
+    // 6 or 9 boxes: flex space-around inline and block / wrap
+    containerEl.classList.add(totalCount === 6 ? 'detectorRegions--6Boxes' : 'detectorRegions--9Boxes');
+    const colsCount = gridCols || (totalCount === 6 ? 3 : 3);
+    const rowsCount = Math.ceil(totalCount / colsCount);
+    for (let r = 0; r < rowsCount; r++) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'detectorRegions__row';
+      containerEl.appendChild(rowEl);
+      for (let c = 0; c < colsCount; c++) {
+        const idx = r * colsCount + c;
+        const patch = result.patchScores[idx];
+        if (!patch) continue;
+        const regionEl = createRegionEl(patch, idx);
+        rowEl.appendChild(regionEl);
+        entry.regionEls.push(regionEl);
+      }
     }
   }
 
@@ -909,9 +537,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       (p, idx) =>
         `<div class="detectorTooltip__patchItem" data-patch-index="${idx}" title="${p.position}: ${Math.round(
           p.aiScore * 100
-        )}%">${p.position}: <strong style="color: ${p.aiScore >= 0.7 ? '#EF4444' : '#10B981'}">${Math.round(
-          p.aiScore * 100
-        )}%</strong></div>`
+        )}%">${p.position}: <strong class="${
+          p.aiScore >= 0.7 ? 'detectorTooltip__patchScore--highAi' : 'detectorTooltip__patchScore--lowAi'
+        }">${Math.round(p.aiScore * 100)}%</strong></div>`
     )
     .join('');
 
@@ -946,7 +574,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   }
 
   tooltipEl.innerHTML = `
-    <div class="detectorTooltip__header" style="color: ${color}">
+    <div class="detectorTooltip__header detectorTooltip__header--${statusModifier}">
       <span>${statusText}</span>
       <span>${scorePercent}% AI</span>
     </div>

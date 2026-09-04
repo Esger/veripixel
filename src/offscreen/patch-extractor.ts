@@ -17,71 +17,203 @@ export interface ExtractionResult {
   height: number;
 }
 
-/**
- * Uses a real hidden browser Flexbox element with `justify-content: space-around`
- * to read layout offsets directly from the browser's layout engine without self-calculating.
- * When crops cannot fit without overlapping (totalLength < count * targetSize), clamps them to
- * the opposite ends to maximize corner/edge coverage.
- */
-function getFlexboxSpaceAroundOffsets(totalLength: number, targetSize: number, count: number): number[] {
-  if (totalLength < targetSize || count <= 1) {
-    return [Math.max(0, Math.round((totalLength - targetSize) / 2))];
-  }
-
-  // If crops cannot fit without overlapping, anchor them at the extreme ends
-  if (totalLength < count * targetSize) {
-    if (count === 2) {
-      return [0, totalLength - targetSize];
-    }
-    return [0, Math.round((totalLength - targetSize) / 2), totalLength - targetSize];
-  }
-
-  if (typeof document !== 'undefined') {
-    const flexContainer = document.createElement('div');
-    flexContainer.style.cssText = `
-      display: flex;
-      flex-direction: row;
-      justify-content: space-around;
-      align-items: center;
-      position: absolute;
-      visibility: hidden;
-      pointer-events: none;
-      width: ${totalLength}px;
-      height: ${targetSize}px;
-    `;
-
-    for (let i = 0; i < count; i++) {
-      const item = document.createElement('div');
-      item.style.cssText = `
-        width: ${targetSize}px;
-        height: ${targetSize}px;
-        flex-shrink: 0;
-      `;
-      flexContainer.appendChild(item);
-    }
-
-    document.body.appendChild(flexContainer);
-    const offsets = Array.from(flexContainer.children).map((child) =>
-      Math.max(0, Math.min(totalLength - targetSize, Math.round((child as HTMLElement).offsetLeft)))
-    );
-    flexContainer.remove();
-    return offsets;
-  }
-
-  // Fallback if document is somehow unavailable
-  const maxSlack = Math.max(0, totalLength - count * targetSize);
-  const outerMargin = Math.round(maxSlack / (count * 2));
-  const innerGap = Math.round(maxSlack / count);
-  return Array.from({ length: count }, (_, i) =>
-    Math.max(0, Math.min(totalLength - targetSize, outerMargin + i * (targetSize + innerGap)))
-  );
+interface BoxRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /**
- * Calculates crop offsets along an axis using real browser Flexbox space-around for all counts.
+ * Fallback layout generator in environments without DOM (e.g. Node tests).
  */
-function calculateAxisOffsets(totalLength: number, targetSize: number, count: number): number[] {
-  return getFlexboxSpaceAroundOffsets(totalLength, targetSize, count);
+function fallbackLayout(
+  containerWidth: number,
+  containerHeight: number,
+  boxSize: number,
+  cols: number,
+  rows: number
+): BoxRect[] {
+  const count = cols * rows;
+  if (count === 1) {
+    return [{
+      x: Math.max(0, (containerWidth - boxSize) / 2),
+      y: Math.max(0, (containerHeight - boxSize) / 2),
+      width: boxSize,
+      height: boxSize
+    }];
+  }
+  if (count === 4) {
+    const half = boxSize / 2;
+    const x1 = containerWidth * (1 / 3) - half;
+    const x2 = containerWidth * (2 / 3) - half;
+    const y1 = containerHeight * (1 / 3) - half;
+    const y2 = containerHeight * (2 / 3) - half;
+    return [
+      { x: x1, y: y1, width: boxSize, height: boxSize },
+      { x: x2, y: y1, width: boxSize, height: boxSize },
+      { x: x1, y: y2, width: boxSize, height: boxSize },
+      { x: x2, y: y2, width: boxSize, height: boxSize }
+    ];
+  }
+  // Generic space-around
+  const xSlack = Math.max(0, containerWidth - cols * boxSize);
+  const ySlack = Math.max(0, containerHeight - rows * boxSize);
+  const xOuter = xSlack / (cols * 2);
+  const xGap = xSlack / cols;
+  const yOuter = ySlack / (rows * 2);
+  const yGap = ySlack / rows;
+  const res: BoxRect[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      res.push({
+        x: xOuter + c * (boxSize + xGap),
+        y: yOuter + r * (boxSize + yGap),
+        width: boxSize,
+        height: boxSize
+      });
+    }
+  }
+  return res;
+}
+
+/**
+ * Uses a real hidden browser container to let CSS Grid and Flexbox layout the exact sample boxes:
+ * - 1 box: grid lines 50%
+ * - 2 boxes: flex space-around / wrap
+ * - 4 boxes: grid-lines 1/3 (Rule of Thirds)
+ * - 6 boxes: flex space-around inline and block / wrap
+ * - 9 boxes: flex space-around inline and block / wrap
+ * Then reads rendered positions and sizes directly from the DOM elements.
+ */
+function getSampleLayoutFromDom(
+  containerWidth: number,
+  containerHeight: number,
+  boxSize: number,
+  cols: number,
+  rows: number
+): BoxRect[] {
+  const count = cols * rows;
+
+  if (typeof document !== 'undefined') {
+    const container = document.createElement('div');
+    container.style.cssText = `
+      position: absolute;
+      visibility: hidden;
+      pointer-events: none;
+      top: 0;
+      left: 0;
+      width: ${containerWidth}px;
+      height: ${containerHeight}px;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    `;
+
+    const boxes: HTMLElement[] = [];
+
+    if (count === 1) {
+      // 1 box: grid lines 50%
+      container.style.display = 'grid';
+      container.style.gridTemplateColumns = '1fr';
+      container.style.gridTemplateRows = '1fr';
+      container.style.placeItems = 'center';
+
+      const box = document.createElement('div');
+      box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; box-sizing: border-box; place-self: center;`;
+      container.appendChild(box);
+      boxes.push(box);
+    } else if (count === 2) {
+      // 2 boxes: flex space-around / wrap
+      container.style.display = 'flex';
+      container.style.flexDirection = 'row';
+      container.style.flexWrap = 'wrap';
+      container.style.justifyContent = 'space-around';
+      container.style.alignItems = 'center';
+      container.style.alignContent = 'space-around';
+
+      for (let i = 0; i < 2; i++) {
+        const box = document.createElement('div');
+        box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
+        container.appendChild(box);
+        boxes.push(box);
+      }
+    } else if (count === 4) {
+      // 4 boxes: grid-lines 1/3 (Rule of Thirds)
+      container.style.display = 'grid';
+      container.style.gridTemplateColumns = '1fr 1fr 1fr';
+      container.style.gridTemplateRows = '1fr 1fr 1fr';
+
+      const placements = [
+        { col: '1 / 3', row: '1 / 3' },
+        { col: '2 / 4', row: '1 / 3' },
+        { col: '1 / 3', row: '2 / 4' },
+        { col: '2 / 4', row: '2 / 4' }
+      ];
+
+      for (const p of placements) {
+        const box = document.createElement('div');
+        box.style.cssText = `
+          width: ${boxSize}px;
+          height: ${boxSize}px;
+          box-sizing: border-box;
+          grid-column: ${p.col};
+          grid-row: ${p.row};
+          place-self: center;
+        `;
+        container.appendChild(box);
+        boxes.push(box);
+      }
+    } else {
+      // 6 or 9 boxes: flex space-around inline and block / wrap
+      const colsCount = cols || (count === 6 && containerWidth >= containerHeight ? 3 : 3);
+      const rowsCount = Math.ceil(count / colsCount);
+
+      container.style.display = 'flex';
+      container.style.flexDirection = 'column';
+      container.style.justifyContent = 'space-around';
+      container.style.alignItems = 'stretch';
+
+      for (let r = 0; r < rowsCount; r++) {
+        const rowEl = document.createElement('div');
+        rowEl.style.cssText = `
+          display: flex;
+          flex-direction: row;
+          justify-content: space-around;
+          align-items: center;
+          width: 100%;
+          height: ${boxSize}px;
+          box-sizing: border-box;
+        `;
+        container.appendChild(rowEl);
+
+        for (let c = 0; c < colsCount; c++) {
+          const idx = r * colsCount + c;
+          if (idx >= count) break;
+          const box = document.createElement('div');
+          box.style.cssText = `width: ${boxSize}px; height: ${boxSize}px; flex-shrink: 0; box-sizing: border-box;`;
+          rowEl.appendChild(box);
+          boxes.push(box);
+        }
+      }
+    }
+
+    document.body.appendChild(container);
+    const containerRect = container.getBoundingClientRect();
+    const results: BoxRect[] = boxes.map((box) => {
+      const rect = box.getBoundingClientRect();
+      return {
+        x: rect.left - containerRect.left,
+        y: rect.top - containerRect.top,
+        width: rect.width,
+        height: rect.height
+      };
+    });
+    container.remove();
+    return results;
+  }
+
+  return fallbackLayout(containerWidth, containerHeight, boxSize, cols, rows);
 }
 
 /**
@@ -166,13 +298,16 @@ export async function extractRuleOfThirdsPatches(
     total: activeCols * activeRows
   };
 
-  const xOffsets = calculateAxisOffsets(width, targetSize, activeCols);
-  const yOffsets = calculateAxisOffsets(height, targetSize, activeRows);
+  const boxRects = getSampleLayoutFromDom(width, height, targetSize, activeCols, activeRows);
   const patches: ExtractedPatch[] = [];
 
   let patchIndex = 0;
   for (let r = 0; r < activeRows; r++) {
     for (let c = 0; c < activeCols; c++) {
+      const idx = r * activeCols + c;
+      const boxRect = boxRects[idx];
+      if (!boxRect) continue;
+
       const position = getGridPositionName(c, r, activeCols, activeRows);
 
       const canvas = document.createElement('canvas');
@@ -188,43 +323,31 @@ export async function extractRuleOfThirdsPatches(
       let dy = 0;
       let dw = targetSize;
       let dh = targetSize;
-      let boxX = 0;
-      let boxY = 0;
-      let boxW = 1;
-      let boxH = 1;
 
       if (width >= targetSize) {
-        sx = xOffsets[c];
+        sx = Math.max(0, Math.min(width - targetSize, Math.round(boxRect.x)));
         sw = targetSize;
         dx = 0;
         dw = targetSize;
-        boxX = sx / width;
-        boxW = targetSize / width;
       } else {
         // Width is smaller than targetSize: center image horizontally with black padding
         sx = 0;
         sw = width;
         dx = Math.round((targetSize - width) / 2);
         dw = width;
-        boxX = 0;
-        boxW = 1;
       }
 
       if (height >= targetSize) {
-        sy = yOffsets[r];
+        sy = Math.max(0, Math.min(height - targetSize, Math.round(boxRect.y)));
         sh = targetSize;
         dy = 0;
         dh = targetSize;
-        boxY = sy / height;
-        boxH = targetSize / height;
       } else {
         // Height is smaller than targetSize: center image vertically with black padding
         sy = 0;
         sh = height;
         dy = Math.round((targetSize - height) / 2);
         dh = height;
-        boxY = 0;
-        boxH = 1;
       }
 
       if (ctx) {
@@ -235,10 +358,10 @@ export async function extractRuleOfThirdsPatches(
       }
 
       const box: PatchBox = {
-        x: boxX,
-        y: boxY,
-        width: boxW,
-        height: boxH
+        x: sx / width,
+        y: sy / height,
+        width: sw / width,
+        height: sh / height
       };
 
       patches.push({ position, patchIndex: patchIndex++, canvas, box });

@@ -13,6 +13,10 @@ export default defineConfig({
           dest: '.'
         },
         {
+          src: 'src/content/overlay.css',
+          dest: 'content'
+        },
+        {
           src: 'node_modules/onnxruntime-web/dist/*.wasm',
           dest: 'assets'
         },
