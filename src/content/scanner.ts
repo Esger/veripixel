@@ -113,7 +113,7 @@ async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
       const canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = h;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return null;
       ctx.drawImage(el, 0, 0, w, h);
       return canvas.toDataURL('image/jpeg', 0.92);
@@ -228,11 +228,23 @@ async function processElement(el: HTMLElement): Promise<void> {
           if (response.result.status === 'complete') {
             injectImageBadge(el, response.result);
           } else if (response.result.status === 'error') {
-            // Attempt data URL extraction fallback in case of network/CORS failure
-            await sendDataUrlAnalysis();
+            const errStr = String(response.result.error || '');
+            // Only attempt data URL extraction fallback in case of CORS / network fetch failure.
+            // Do NOT retry if the failure was a timeout or cancellation to prevent retry loops.
+            if (
+              !errStr.includes('timed out') &&
+              !errStr.includes('cancelled') &&
+              !errStr.includes('queue')
+            ) {
+              await sendDataUrlAnalysis();
+            } else {
+              removeBadge(el);
+            }
+          } else {
+            removeBadge(el);
           }
         } else {
-          await sendDataUrlAnalysis();
+          removeBadge(el);
         }
       }
     );

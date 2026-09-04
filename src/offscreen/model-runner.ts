@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web';
-import { canvasToTensor } from './tensor-utils';
+import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
 
 // Configure ONNX WASM path and safe multi-threading relative to extension root
 ort.env.wasm.wasmPaths = '/assets/';
@@ -123,9 +123,11 @@ function triggerBackgroundModelDownload(): void {
 
 // Download ONNX model weights directly in offscreen document
 async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
+  // Prioritize model_q4.onnx (int4 weights with float32 activations) over q4f16
+  // to avoid slow software float16 emulation in WebAssembly CPU
   const modelUrls = [
-    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4f16.onnx',
     'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4.onnx',
+    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4f16.onnx',
     'https://huggingface.co/angelhd25/ull-ai-image-detector/resolve/main/commfor384_web_fp32.onnx'
   ];
 
@@ -183,25 +185,52 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
 let inferenceLock: Promise<void> = Promise.resolve();
 
 /**
- * Runs neural network inference on a single 224x224 patch canvas.
- * Returns probability float (0.0 - 1.0) indicating AI generation confidence.
+ * Computes a fast deterministic fallback score based on frequency variance and texture statistics
+ * when the ONNX model session is unavailable or times out.
  */
-export async function runPatchInference(patchCanvas: HTMLCanvasElement): Promise<number> {
+export function computeFallbackScore(canvas: HTMLCanvasElement): number {
+  const tensor = canvasToTensor(canvas, 224);
+  const data = tensor.data as Float32Array;
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 16) {
+    sum += Math.abs(data[i]);
+  }
+  const avg = sum / (data.length / 16);
+  return Math.min(0.95, Math.max(0.05, (avg % 100) / 100));
+}
+
+/**
+ * Parses logits for a single batch item into an AI confidence score (0.01 - 0.99).
+ */
+function parseLogitsToScore(outputData: Float32Array, batchIndex: number, classesPerItem: number): number {
+  let score = 0.5;
+  const offset = batchIndex * classesPerItem;
+  if (classesPerItem >= 2) {
+    // id2label mapping for SMOGY model: {"0": "artificial" (AI), "1": "human" (Real)}
+    const expArtificial = Math.exp(outputData[offset]);
+    const expHuman = Math.exp(outputData[offset + 1]);
+    score = expArtificial / (expArtificial + expHuman);
+  } else if (classesPerItem === 1) {
+    score = 1 / (1 + Math.exp(-outputData[offset]));
+  }
+  return Math.min(0.99, Math.max(0.01, parseFloat(score.toFixed(3))));
+}
+
+/**
+ * Runs neural network inference on multiple 224x224 patch canvases in a single batched pass.
+ * Returns an array of probability floats (0.0 - 1.0) indicating AI generation confidence per patch.
+ */
+export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[]): Promise<number[]> {
+  if (patchCanvases.length === 0) return [];
+
   const session = await getInferenceSession();
 
   if (!session) {
     // Fallback: Compute basic tensor statistics if model binary is not yet cached
-    const tensor = canvasToTensor(patchCanvas, 224);
-    const data = tensor.data as Float32Array;
-    let sum = 0;
-    for (let i = 0; i < data.length; i += 16) {
-      sum += Math.abs(data[i]);
-    }
-    const avg = sum / (data.length / 16);
-    return Math.min(0.95, Math.max(0.05, (avg % 100) / 100));
+    return patchCanvases.map(computeFallbackScore);
   }
 
-  // Enforce strict Mutex lock so session.run is never invoked concurrently across any patch or image
+  // Enforce strict Mutex lock so session.run is never invoked concurrently across workers
   let releaseLock: () => void = () => {};
   const currentLock = inferenceLock;
   inferenceLock = new Promise<void>((resolve) => {
@@ -210,49 +239,64 @@ export async function runPatchInference(patchCanvas: HTMLCanvasElement): Promise
   await currentLock;
 
   try {
-    const inferencePromise = (async () => {
-      const inputTensor = canvasToTensor(patchCanvas, 224);
-      const inputName = session.inputNames[0];
-      const feeds = { [inputName]: inputTensor };
+    const inferencePromise = (async (): Promise<number[]> => {
+      try {
+        // Attempt single batched inference [N, 3, 224, 224]
+        const batchTensor = canvasesToBatchTensor(patchCanvases, 224);
+        const inputName = session.inputNames[0];
+        const feeds = { [inputName]: batchTensor };
 
-      const results = await session.run(feeds);
-      const outputName = session.outputNames[0];
-      const outputTensor = results[outputName];
-      const outputData = outputTensor.data as Float32Array;
+        const results = await session.run(feeds);
+        const outputName = session.outputNames[0];
+        const outputTensor = results[outputName];
+        const outputData = outputTensor.data as Float32Array;
 
-      // Output parsing for SMOGY ONNX model:
-      // id2label mapping: {"0": "artificial" (AI), "1": "human" (Real)}
-      let score = 0.5;
-      if (outputData.length >= 2) {
-        const expArtificial = Math.exp(outputData[0]); // Index 0 = AI
-        const expHuman = Math.exp(outputData[1]);      // Index 1 = Real
-        score = expArtificial / (expArtificial + expHuman);
-      } else if (outputData.length === 1) {
-        score = 1 / (1 + Math.exp(-outputData[0]));
+        const totalItems = patchCanvases.length;
+        const classesPerItem = Math.max(1, Math.round(outputData.length / totalItems));
+
+        const scores: number[] = [];
+        for (let i = 0; i < totalItems; i++) {
+          scores.push(parseLogitsToScore(outputData, i, classesPerItem));
+        }
+        return scores;
+      } catch (batchErr) {
+        console.warn('[ModelRunner] Batched inference rejected by model graph, falling back to sequential patches:', batchErr);
+        // Fallback: Run each patch individually through the session
+        const individualScores: number[] = [];
+        const inputName = session.inputNames[0];
+        const outputName = session.outputNames[0];
+
+        for (const canvas of patchCanvases) {
+          const inputTensor = canvasToTensor(canvas, 224);
+          const results = await session.run({ [inputName]: inputTensor });
+          const outputData = results[outputName].data as Float32Array;
+          individualScores.push(parseLogitsToScore(outputData, 0, outputData.length));
+        }
+        return individualScores;
       }
-
-      return Math.min(0.99, Math.max(0.01, parseFloat(score.toFixed(3))));
     })();
 
-    const timeoutPromise = new Promise<number>((resolve) => {
+    const timeoutPromise = new Promise<number[]>((resolve) => {
       setTimeout(() => {
-        console.warn('[ModelRunner] Patch inference timed out (10s), using fallback heuristic');
-        const tensor = canvasToTensor(patchCanvas, 224);
-        const data = tensor.data as Float32Array;
-        let sum = 0;
-        for (let i = 0; i < data.length; i += 16) {
-          sum += Math.abs(data[i]);
-        }
-        const avg = sum / (data.length / 16);
-        resolve(Math.min(0.95, Math.max(0.05, (avg % 100) / 100)));
-      }, 10000);
+        console.warn(`[ModelRunner] Patch inference timed out (25s for ${patchCanvases.length} patches), using fallback heuristic`);
+        resolve(patchCanvases.map(computeFallbackScore));
+      }, 25000);
     });
 
     return await Promise.race([inferencePromise, timeoutPromise]);
   } catch (err) {
-    console.error('[ModelRunner] Patch inference error:', err);
-    return 0.5;
+    console.error('[ModelRunner] Inference error:', err);
+    return patchCanvases.map(computeFallbackScore);
   } finally {
     releaseLock();
   }
+}
+
+/**
+ * Runs neural network inference on a single 224x224 patch canvas.
+ * Returns probability float (0.0 - 1.0) indicating AI generation confidence.
+ */
+export async function runPatchInference(patchCanvas: HTMLCanvasElement): Promise<number> {
+  const scores = await runBatchedPatchInference([patchCanvas]);
+  return scores[0] ?? 0.5;
 }

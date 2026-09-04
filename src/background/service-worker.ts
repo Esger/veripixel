@@ -222,7 +222,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         const relayTimer = setTimeout(() => {
           if (!responseHandled) {
             responseHandled = true;
-            console.warn('[Background] Offscreen processing timed out (20s) for:', imageUrl);
+            console.warn('[Background] Offscreen processing timed out (45s) for:', imageUrl);
             if (tabId !== undefined) {
               const stats = getOrCreateTabStats(tabId);
               stats.isScanning = false;
@@ -238,11 +238,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 patchScores: [],
                 metadata: { exifPresent: false, c2paPresent: false, qualityScore: 0 },
                 timestamp: Date.now(),
-                error: 'Offscreen processing timed out'
+                error: 'Offscreen processing timed out (45s)'
               }
             });
           }
-        }, 20000);
+        }, 45000);
 
         chrome.runtime.sendMessage(relayMessage, async (response) => {
           if (responseHandled) return;

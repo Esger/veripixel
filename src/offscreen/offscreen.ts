@@ -1,7 +1,7 @@
 import exifr from 'exifr';
 import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
-import { runPatchInference } from './model-runner';
+import { runBatchedPatchInference } from './model-runner';
 // Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
 // so that Chrome's extension manager does not collect them as extension errors.
 const originalConsoleError = console.error;
@@ -32,7 +32,10 @@ class PriorityConcurrencyQueue {
   private active = 0;
   private queue: QueuedTask[] = [];
 
-  constructor(private maxConcurrent = 1) {}
+  constructor(
+    private maxConcurrent = 1,
+    private maxBackgroundQueue = 6
+  ) {}
 
   async run<T>(
     task: () => Promise<T>,
@@ -48,9 +51,20 @@ class PriorityConcurrencyQueue {
           isModal
         };
         if (priority === 'high' || isModal) {
-          // Jump to the front of the queue
+          // Modal / high priority requests cancel background queue and jump to front
+          this.cancelBackgroundTasks();
           this.queue.unshift(item);
         } else {
+          // Bounded background queue: drop oldest background task if queue depth is exceeded
+          const bgTasks = this.queue.filter((t) => t.priority !== 'high' && !t.isModal);
+          if (bgTasks.length >= this.maxBackgroundQueue) {
+            const oldest = bgTasks[0];
+            const idx = this.queue.indexOf(oldest);
+            if (idx !== -1) {
+              this.queue.splice(idx, 1);
+              oldest.cancel();
+            }
+          }
           this.queue.push(item);
         }
       });
@@ -232,16 +246,15 @@ async function processImageBuffer(
       }
 
       // 3. Compute patch scores via ONNX Runtime Web
-      const patchScores: PatchResult[] = [];
-      for (const patch of extraction.patches) {
-        const aiScore = await runPatchInference(patch.canvas);
-        patchScores.push({
-          patchIndex: patch.patchIndex,
-          position: patch.position,
-          aiScore,
-          box: patch.box
-        });
-      }
+      const patchCanvases = extraction.patches.map((p) => p.canvas);
+      const patchScoresList = await runBatchedPatchInference(patchCanvases);
+
+      const patchScores: PatchResult[] = extraction.patches.map((patch, i) => ({
+        patchIndex: patch.patchIndex,
+        position: patch.position,
+        aiScore: patchScoresList[i] ?? 0.5,
+        box: patch.box
+      }));
 
       // Aggregate overall score
       const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
@@ -321,16 +334,15 @@ async function processImageUrl(
       }
 
       // 3. Compute patch scores via ONNX Runtime Web
-      const patchScores: PatchResult[] = [];
-      for (const patch of extraction.patches) {
-        const aiScore = await runPatchInference(patch.canvas);
-        patchScores.push({
-          patchIndex: patch.patchIndex,
-          position: patch.position,
-          aiScore,
-          box: patch.box
-        });
-      }
+      const patchCanvases = extraction.patches.map((p) => p.canvas);
+      const patchScoresList = await runBatchedPatchInference(patchCanvases);
+
+      const patchScores: PatchResult[] = extraction.patches.map((patch, i) => ({
+        patchIndex: patch.patchIndex,
+        position: patch.position,
+        aiScore: patchScoresList[i] ?? 0.5,
+        box: patch.box
+      }));
 
       // Aggregate overall score
       const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));

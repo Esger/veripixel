@@ -319,7 +319,7 @@ export async function extractRuleOfThirdsPatches(
       const canvas = document.createElement('canvas');
       canvas.width = targetSize;
       canvas.height = targetSize;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
       let sx = 0;
       let sy = 0;
