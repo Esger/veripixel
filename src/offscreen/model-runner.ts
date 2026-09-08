@@ -3,8 +3,10 @@ import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
 import { logger } from './logger';
 
 // Configure ONNX WASM path and disable multi-threading for rock-solid extension stability.
-// Using an object { wasm: ... } guarantees useEmbeddedModule evaluates to true in onnxruntime-web,
-// which completely bypasses dynamic .mjs import and prevents Web Worker deadlocks in Chrome MV3 offscreen documents.
+// Note on ort-wasm-simd-threaded.wasm: in onnxruntime-web@1.21.0, Microsoft/ONNX unified their WASM
+// distribution into ort-wasm-simd-threaded.wasm (there is no standalone non-threaded simd wasm in 1.21.0).
+// Setting numThreads = 1 ensures it executes single-threaded without spawning Web Worker threads,
+// while bypasses dynamic .mjs imports and prevents deadlock issues in Chrome MV3 offscreen documents.
 if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
   ort.env.wasm.wasmPaths = {
     wasm: chrome.runtime.getURL('assets/ort-wasm-simd-threaded.wasm')
