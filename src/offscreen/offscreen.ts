@@ -2,6 +2,7 @@ import exifr from 'exifr';
 import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runBatchedPatchInference } from './model-runner';
+import { logger } from './logger';
 // Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
 // so that Chrome's extension manager does not collect them as extension errors.
 const originalConsoleError = console.error;
@@ -12,13 +13,13 @@ console.error = (...args: any[]) => {
     msg.includes('[I:onnxruntime:') ||
     msg.includes('VerifyEachNodeIsAssignedToAnEp')
   ) {
-    console.warn(...args);
+    logger.warn(...args);
     return;
   }
   originalConsoleError.apply(console, args);
 };
 
-console.log('[Offscreen] Document script active.');
+logger.log('[Offscreen] Document script active.');
 
 interface QueuedTask {
   tabId?: number;
@@ -43,7 +44,7 @@ class PriorityConcurrencyQueue {
   setActiveTab(tabId: number): void {
     this.activeTabId = tabId;
     this.reSortQueue();
-    console.log(`[Offscreen Queue] Active tab set to ${tabId}, re-sorted ${this.queue.length} tasks`);
+    logger.log(`[Offscreen Queue] Active tab set to ${tabId}, re-sorted ${this.queue.length} tasks`);
   }
 
   cancelTasksForTab(tabId: number): void {
@@ -59,7 +60,7 @@ class PriorityConcurrencyQueue {
     }
     this.queue = remaining;
     if (cancelledCount > 0) {
-      console.log(`[Offscreen Queue] Cancelled ${cancelledCount} pending tasks for tab ${tabId}`);
+      logger.log(`[Offscreen Queue] Cancelled ${cancelledCount} pending tasks for tab ${tabId}`);
     }
   }
 
@@ -129,7 +130,7 @@ class PriorityConcurrencyQueue {
     try {
       // Drop task if it waited in the queue for too long (>25s) to avoid running expired work
       if (Date.now() - enqueuedAt > 25000) {
-        console.warn(`[Offscreen Queue] Task dropped: waited in queue ${Date.now() - enqueuedAt}ms`);
+        logger.warn(`[Offscreen Queue] Task dropped: waited in queue ${Date.now() - enqueuedAt}ms`);
         return null;
       }
       return await task();

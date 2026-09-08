@@ -10,8 +10,6 @@ import {
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
-console.log('[ContentScript] AI Image Detector scanner initialized.');
-
 const MIN_IMAGE_SIZE = 224; // Skip images smaller than 224x224 (AI model sample size)
 
 function isExtensionContextValid(): boolean {

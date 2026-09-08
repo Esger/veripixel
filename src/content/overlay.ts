@@ -573,8 +573,8 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   if (!isModalActive || isInsideModal) {
     try {
       badgeEl.showPopover();
-    } catch (e) {
-      console.warn('[Overlay] showPopover failed:', e);
+    } catch {
+      // Ignore if element is detached or popover state transition in progress
     }
   }
   updateBadgePosition(targetEl, activeModals);

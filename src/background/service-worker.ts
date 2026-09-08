@@ -1,4 +1,5 @@
 import { ExtensionMessage, AnalysisResult, TabScanStats, ImageSummary } from '../shared/types';
+import { logger } from './logger';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 
@@ -21,7 +22,7 @@ async function getCachedResult(url: string): Promise<AnalysisResult | null> {
     const data = await chrome.storage.session.get(key);
     return (data[key] as AnalysisResult) || null;
   } catch (e) {
-    console.warn('[Background] Failed to get cached result:', e);
+    logger.warn('[Background] Failed to get cached result:', e);
     return null;
   }
 }
@@ -31,7 +32,7 @@ async function setCachedResult(url: string, result: AnalysisResult): Promise<voi
     const key = await getCacheKey(url);
     await chrome.storage.session.set({ [key]: result });
   } catch (e) {
-    console.warn('[Background] Failed to set cached result:', e);
+    logger.warn('[Background] Failed to set cached result:', e);
   }
 }
 
@@ -86,25 +87,25 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
             reasons: [chrome.offscreen.Reason.BLOBS, chrome.offscreen.Reason.DOM_PARSER],
             justification: 'AI Model Inference using ONNX Runtime Web and DOM Canvas image cropping'
           });
-          console.log('[Background] Offscreen Document created successfully.');
+          logger.log('[Background] Offscreen Document created successfully.');
         }
 
         // Wait for offscreen script to evaluate and respond to ping (up to 2 seconds)
         for (let i = 0; i < 20; i++) {
           const ready = await pingOffscreen(100);
           if (ready) {
-            console.log('[Background] Verified Offscreen Document script is ready and listening.');
+            logger.log('[Background] Verified Offscreen Document script is ready and listening.');
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        console.warn('[Background] Offscreen Document created, ping timed out; proceeding anyway.');
+        logger.warn('[Background] Offscreen Document created, ping timed out; proceeding anyway.');
       } catch (err: any) {
         const msg = String(err?.message || err || '');
         if (msg.includes('single offscreen document') || msg.includes('already exists')) {
-          console.log('[Background] Offscreen document already active.');
+          logger.log('[Background] Offscreen document already active.');
         } else {
-          console.error('[Background] Failed to create offscreen document:', err);
+          logger.error('[Background] Failed to create offscreen document:', err);
         }
       } finally {
         creatingOffscreenPromise = null;
@@ -163,7 +164,7 @@ async function saveTabStats(stats: TabScanStats): Promise<void> {
   try {
     await chrome.storage.session.set({ [`tab_${stats.tabId}`]: stats });
   } catch (e) {
-    console.warn('[Background] Failed to persist tab stats:', e);
+    logger.warn('[Background] Failed to persist tab stats:', e);
   }
 }
 
@@ -331,7 +332,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         const relayTimer = setTimeout(async () => {
           if (!responseHandled) {
             responseHandled = true;
-            console.warn('[Background] Offscreen processing timed out (45s) for:', imageUrl);
+            logger.warn('[Background] Offscreen processing timed out (45s) for:', imageUrl);
             if (tabId !== undefined) {
               const stats = await getOrCreateTabStats(tabId);
               stats.isScanning = false;
@@ -360,7 +361,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           clearTimeout(relayTimer);
 
           if (chrome.runtime.lastError) {
-            console.warn('[Background] Message error to offscreen:', chrome.runtime.lastError.message);
+            logger.warn('[Background] Message error to offscreen:', chrome.runtime.lastError.message);
           }
 
           if (response && response.result) {
@@ -416,7 +417,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           }
         });
       } catch (err) {
-        console.error('[Background] Error handling image analysis:', err);
+        logger.error('[Background] Error handling image analysis:', err);
         if (tabId !== undefined) {
           const stats = await getOrCreateTabStats(tabId);
           stats.isScanning = false;
@@ -530,4 +531,4 @@ function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void
   stats.likelyReal = stats.images.filter((img) => img.aiScore < 0.3).length;
 }
 
-console.log('[Background] Service worker initialized.');
+logger.log('[Background] Service worker initialized.');

@@ -1,5 +1,6 @@
 import * as ort from 'onnxruntime-web/wasm';
 import { canvasToTensor, canvasesToBatchTensor } from './tensor-utils';
+import { logger } from './logger';
 
 // Configure ONNX WASM path and disable multi-threading for rock-solid extension stability.
 // Using an object { wasm: ... } guarantees useEmbeddedModule evaluates to true in onnxruntime-web,
@@ -35,7 +36,7 @@ function openDB(): Promise<IDBDatabase> {
 
     request.onblocked = () => {
       clearTimeout(timer);
-      console.warn('[ModelRunner] IndexedDB open blocked by another context.');
+      logger.warn('[ModelRunner] IndexedDB open blocked by another context.');
       reject(new Error('IndexedDB blocked'));
     };
 
@@ -65,7 +66,7 @@ export async function getCachedModelBuffer(): Promise<ArrayBuffer | null> {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        console.warn('[ModelRunner] getCachedModelBuffer transaction timed out');
+        logger.warn('[ModelRunner] getCachedModelBuffer transaction timed out');
         resolve(null);
       }, 3000);
 
@@ -91,7 +92,7 @@ export async function getCachedModelBuffer(): Promise<ArrayBuffer | null> {
       };
     });
   } catch (err) {
-    console.warn('[ModelRunner] IndexedDB access warning:', err);
+    logger.warn('[ModelRunner] IndexedDB access warning:', err);
     return null;
   }
 }
@@ -108,7 +109,7 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
       req.onerror = () => reject(req.error);
     });
   } catch (err) {
-    console.error('[ModelRunner] Failed to cache model in IndexedDB:', err);
+    logger.error('[ModelRunner] Failed to cache model in IndexedDB:', err);
   }
 }
 
@@ -120,17 +121,17 @@ async function loadModelBuffer(): Promise<ArrayBuffer | null> {
         ? chrome.runtime.getURL('assets/model_q4.onnx')
         : '/assets/model_q4.onnx';
 
-    console.log(`[ModelRunner] Loading bundled ONNX model from: ${modelUrl}`);
+    logger.log(`[ModelRunner] Loading bundled ONNX model from: ${modelUrl}`);
     const res = await fetch(modelUrl);
     if (res.ok) {
       const buffer = await res.arrayBuffer();
       if (buffer.byteLength > 1024 * 100) {
-        console.log(`[ModelRunner] Successfully loaded bundled model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
+        logger.log(`[ModelRunner] Successfully loaded bundled model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
         return buffer;
       }
     }
   } catch (err) {
-    console.warn('[ModelRunner] Bundled model load error:', err);
+    logger.warn('[ModelRunner] Bundled model load error:', err);
   }
   return null;
 }
@@ -152,12 +153,12 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
       }
 
       if (!modelBuffer) {
-        console.warn('[ModelRunner] Failed to obtain model buffer.');
+        logger.warn('[ModelRunner] Failed to obtain model buffer.');
         sessionPromise = null;
         return null;
       }
 
-      console.log('[ModelRunner] Initializing ONNX InferenceSession with WASM SIMD...');
+      logger.log('[ModelRunner] Initializing ONNX InferenceSession with WASM SIMD...');
       const session = await ort.InferenceSession.create(modelBuffer, {
         executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
@@ -174,14 +175,14 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
       try {
         const dummyInput = new ort.Tensor('float32', new Float32Array(1 * 3 * 224 * 224), [1, 3, 224, 224]);
         await session.run({ [session.inputNames[0]]: dummyInput });
-        console.log('[ModelRunner] ONNX InferenceSession successfully warmed up (WASM SIMD).');
+        logger.log('[ModelRunner] ONNX InferenceSession successfully warmed up (WASM SIMD).');
       } catch (warmupErr) {
-        console.warn('[ModelRunner] Session warmup notice:', warmupErr);
+        logger.warn('[ModelRunner] Session warmup notice:', warmupErr);
       }
 
       return session;
     } catch (err) {
-      console.error('[ModelRunner] Error creating ONNX InferenceSession:', err);
+      logger.error('[ModelRunner] Error creating ONNX InferenceSession:', err);
       sessionPromise = null;
       return null;
     }
@@ -273,12 +274,12 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
         for (let i = 0; i < totalItems; i++) {
           scores.push(parseLogitsToScore(outputData, i, classesPerItem));
         }
-        console.log(
+        logger.log(
           `[ModelRunner] Batched inference completed for ${totalItems} patches in ${Date.now() - tStart}ms (Scores: [${scores.join(', ')}])`
         );
         return scores;
       } catch (batchErr) {
-        console.warn('[ModelRunner] Batched inference rejected by model graph, falling back to sequential patches:', batchErr);
+        logger.warn('[ModelRunner] Batched inference rejected by model graph, falling back to sequential patches:', batchErr);
         // Fallback: Run each patch individually through the session
         const individualScores: number[] = [];
         const inputName = session.inputNames[0];
@@ -290,7 +291,7 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
           const outputData = results[outputName].data as Float32Array;
           individualScores.push(parseLogitsToScore(outputData, 0, outputData.length));
         }
-        console.log(
+        logger.log(
           `[ModelRunner] Sequential patch inference completed in ${Date.now() - tStart}ms (Scores: [${individualScores.join(', ')}])`
         );
         return individualScores;
@@ -300,7 +301,7 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<number[]>((resolve) => {
       timeoutTimer = setTimeout(() => {
-        console.warn(`[ModelRunner] Patch inference timed out (35s for ${patchCanvases.length} patches), using fallback heuristic`);
+        logger.warn(`[ModelRunner] Patch inference timed out (35s for ${patchCanvases.length} patches), using fallback heuristic`);
         resolve(patchCanvases.map(computeFallbackScore));
       }, 35000);
     });
@@ -313,7 +314,7 @@ export async function runBatchedPatchInference(patchCanvases: HTMLCanvasElement[
       }
     }
   } catch (err) {
-    console.error('[ModelRunner] Inference error:', err);
+    logger.error('[ModelRunner] Inference error:', err);
     return patchCanvases.map(computeFallbackScore);
   } finally {
     releaseLock();
