@@ -233,10 +233,12 @@ function generateForensicReasoning(
   if (patchScores.length > 1 && spread >= 0.40 && maxScore >= 0.70) {
     const topPatch = patchScores.find((p) => p.aiScore === maxScore);
     const lowPatch = patchScores.find((p) => p.aiScore === minScore);
+    const topLabel = topPatch?.position || 'one sample';
+    const lowLabel = lowPatch?.position || 'another sample';
     return {
       type: 'localized-edit',
       title: 'Localized AI Alteration Detected',
-      description: `High divergence across regions (${Math.round(maxScore * 100)}% in ${topPatch?.position || 'crop'} vs ${Math.round(minScore * 100)}% in ${lowPatch?.position || 'crop'}). Strong indicator of inpainting, composite, or face-swap.`
+      description: `High divergence across regions (${Math.round(maxScore * 100)}% in ${topLabel} vs ${Math.round(minScore * 100)}% in ${lowLabel}). Strong indicator of inpainting, composite, or face-swap.`
     };
   }
 

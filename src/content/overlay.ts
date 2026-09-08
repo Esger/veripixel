@@ -677,8 +677,8 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     regionEl.className = `detectorRegion detectorRegion--${mod}`;
     regionEl.dataset.patchIndex = String(idx);
 
-    const formattedPos = patch.position.charAt(0).toUpperCase() + patch.position.slice(1);
-    regionEl.innerHTML = `<span class="detectorRegion__label detectorRegion__label--${mod}">${formattedPos} (${patchScorePercent}%)</span>`;
+    const labelText = `Sample #${idx + 1}`;
+    regionEl.innerHTML = `<span class="detectorRegion__label detectorRegion__label--${mod}">${labelText} (${patchScorePercent}%)</span>`;
 
     return regionEl;
   };
@@ -733,9 +733,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   const patchesHtml = result.patchScores
     .map(
       (p, idx) =>
-        `<div class="detectorTooltip__patchItem" data-patch-index="${idx}" title="${p.position}: ${Math.round(
+        `<div class="detectorTooltip__patchItem" data-patch-index="${idx}" title="Sample #${idx + 1}: ${Math.round(
           p.aiScore * 100
-        )}%">${p.position}: <strong class="${
+        )}%">Sample #${idx + 1}: <strong class="${
           p.aiScore >= 0.7 ? 'detectorTooltip__patchScore--highAi' : 'detectorTooltip__patchScore--lowAi'
         }">${Math.round(p.aiScore * 100)}%</strong></div>`
     )

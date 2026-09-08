@@ -80,32 +80,6 @@ export function calculateSampleLayout(
   return res;
 }
 
-/**
- * Formulates intuitive semantic position names for arbitrary grid dimensions (e.g. 2x2, 3x2, 2x3, 3x3, 2x1, 1x2).
- */
-function getGridPositionName(col: number, row: number, totalCols: number, totalRows: number): PatchPosition {
-  if (totalCols === 1 && totalRows === 1) return 'center';
-
-  if (totalRows === 1) {
-    if (col === 0) return 'middle-left';
-    if (col === totalCols - 1) return 'middle-right';
-    return 'center';
-  }
-
-  if (totalCols === 1) {
-    if (row === 0) return 'top-center';
-    if (row === totalRows - 1) return 'bottom-center';
-    return 'center';
-  }
-
-  const colName = col === 0 ? 'left' : col === totalCols - 1 ? 'right' : 'center';
-  const rowName = row === 0 ? 'top' : row === totalRows - 1 ? 'bottom' : 'middle';
-
-  if (rowName === 'middle' && colName === 'center') return 'center';
-  if (rowName === 'middle') return `middle-${colName}` as PatchPosition;
-  if (colName === 'center') return `${rowName}-center` as PatchPosition;
-  return `${rowName}-${colName}` as PatchPosition;
-}
 
 /**
  * Extracts patches from image centered on grid.
@@ -175,7 +149,7 @@ export async function extractRuleOfThirdsPatches(
       const boxRect = boxRects[idx];
       if (!boxRect) continue;
 
-      const position = getGridPositionName(c, r, activeCols, activeRows);
+      const position = `Sample #${idx + 1}`;
 
       const canvas = document.createElement('canvas');
       canvas.width = targetSize;

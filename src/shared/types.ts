@@ -7,16 +7,7 @@ export interface PatchBox {
   height: number; // 0.0 - 1.0 (relative to image height)
 }
 
-export type PatchPosition =
-  | 'top-left'
-  | 'top-center'
-  | 'top-right'
-  | 'middle-left'
-  | 'center'
-  | 'middle-right'
-  | 'bottom-left'
-  | 'bottom-center'
-  | 'bottom-right';
+export type PatchPosition = string;
 
 export interface PatchResult {
   patchIndex: number;
