@@ -112,46 +112,25 @@ export async function cacheModelBuffer(buffer: ArrayBuffer): Promise<void> {
   }
 }
 
-// Download or load bundled high-accuracy SMOGY ONNX model weights
-async function downloadModelBuffer(): Promise<ArrayBuffer | null> {
-  // 1. Check local bundled model in assets/ first (instant offline availability)
-  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
-    try {
-      const localUrl = chrome.runtime.getURL('assets/model_q4.onnx');
-      console.log(`[ModelRunner] Checking for bundled ONNX model: ${localUrl}`);
-      const res = await fetch(localUrl);
-      if (res.ok) {
-        const buffer = await res.arrayBuffer();
-        if (buffer.byteLength > 1024 * 100) {
-          console.log(`[ModelRunner] Successfully loaded bundled model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
-          return buffer;
-        }
-      }
-    } catch (localErr) {
-      console.warn('[ModelRunner] Bundled model check skipped, attempting remote CDN:', localErr);
-    }
-  }
+// Load bundled high-accuracy SMOGY ONNX model weights from extension assets
+async function loadModelBuffer(): Promise<ArrayBuffer | null> {
+  try {
+    const modelUrl =
+      typeof chrome !== 'undefined' && chrome.runtime?.getURL
+        ? chrome.runtime.getURL('assets/model_q4.onnx')
+        : '/assets/model_q4.onnx';
 
-  // 2. Fallback to remote HuggingFace CDN
-  const modelUrls = [
-    'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX/resolve/main/onnx/model_q4.onnx',
-    'https://huggingface.co/onnx-community/ai-image-detect-distilled-ONNX/resolve/main/onnx/model_q4.onnx'
-  ];
-
-  for (const url of modelUrls) {
-    try {
-      console.log(`[ModelRunner] Downloading ONNX model weights from: ${url}`);
-      const res = await fetch(url);
-      if (res.ok) {
-        const buffer = await res.arrayBuffer();
-        if (buffer.byteLength > 1024 * 100) {
-          console.log(`[ModelRunner] Successfully downloaded model weights (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
-          return buffer;
-        }
+    console.log(`[ModelRunner] Loading bundled ONNX model from: ${modelUrl}`);
+    const res = await fetch(modelUrl);
+    if (res.ok) {
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength > 1024 * 100) {
+        console.log(`[ModelRunner] Successfully loaded bundled model (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
+        return buffer;
       }
-    } catch (err) {
-      console.warn(`[ModelRunner] Model fetch attempt failed for ${url}:`, err);
     }
+  } catch (err) {
+    console.warn('[ModelRunner] Bundled model load error:', err);
   }
   return null;
 }
@@ -164,8 +143,8 @@ export async function getInferenceSession(): Promise<ort.InferenceSession | null
 
   sessionPromise = (async () => {
     try {
-      // 1. Prioritize clean bundled local model asset in extension (zero network latency, never stale)
-      let modelBuffer = await downloadModelBuffer();
+      // 1. Prioritize clean bundled local model asset in extension (zero network latency, offline, Web Store compliant)
+      let modelBuffer = await loadModelBuffer();
 
       // 2. Fallback to IndexedDB cache if running in web/testing environment
       if (!modelBuffer) {

@@ -101,8 +101,8 @@ function isValidTargetElement(el: HTMLElement): boolean {
 async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
   try {
     if (el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0 && el.naturalHeight > 0) {
-      // Limit to 1600px max dimension to prevent excessive memory and layout stalls on huge photos
-      const maxDim = 1600;
+      // Limit to 800px max dimension to prevent main-thread jank while preserving ample resolution for 224x224 patches
+      const maxDim = 800;
       let w = el.naturalWidth;
       let h = el.naturalHeight;
       if (w > maxDim || h > maxDim) {
@@ -116,8 +116,25 @@ async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
       canvas.height = h;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return null;
+
+      // Use createImageBitmap when available for off-thread asynchronous decoding and resizing
+      if (typeof createImageBitmap !== 'undefined') {
+        try {
+          const bitmap = await createImageBitmap(el, {
+            resizeWidth: w,
+            resizeHeight: h,
+            resizeQuality: 'medium'
+          });
+          ctx.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          return canvas.toDataURL('image/jpeg', 0.85);
+        } catch (bitmapErr) {
+          // Fallback to direct drawImage if createImageBitmap is restricted
+        }
+      }
+
       ctx.drawImage(el, 0, 0, w, h);
-      return canvas.toDataURL('image/jpeg', 0.92);
+      return canvas.toDataURL('image/jpeg', 0.85);
     }
   } catch (err) {
     // Ignore cross-origin tainted canvas restrictions
@@ -126,173 +143,271 @@ async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
 }
 
 const inFlightUrls = new Set<string>();
+const MAX_CONCURRENT_PAGE_SCANS = 3;
+let activeScanCount = 0;
+const pendingScanQueue: HTMLElement[] = [];
 
-async function processElement(el: HTMLElement): Promise<void> {
-  if (!isExtensionContextValid()) {
+function enqueueElementForScan(el: HTMLElement): void {
+  if (
+    !isExtensionContextValid() ||
+    el.dataset.aiDetectorProcessed === 'true' ||
+    el.dataset.aiDetectorProcessed === 'analyzing'
+  ) {
+    return;
+  }
+  if (!pendingScanQueue.includes(el)) {
+    pendingScanQueue.push(el);
+  }
+  pumpScanQueue();
+}
+
+function pumpScanQueue(): void {
+  if (!isExtensionContextValid() || document.visibilityState === 'hidden') {
     return;
   }
 
-  // Do not process or queue images while the tab is inactive/hidden
-  if (document.visibilityState === 'hidden') {
-    return;
+  // Prune invalid or already processed elements
+  for (let i = pendingScanQueue.length - 1; i >= 0; i--) {
+    const el = pendingScanQueue[i];
+    if (!document.contains(el) || !isValidTargetElement(el) || el.dataset.aiDetectorProcessed === 'true') {
+      pendingScanQueue.splice(i, 1);
+    }
   }
 
-  if (el.dataset.aiDetectorProcessed === 'true' || el.dataset.aiDetectorProcessed === 'analyzing') {
-    return;
-  }
+  // Priority sorting:
+  // 1. Modals first
+  // 2. Visible elements closest to viewport center
+  // 3. Offscreen elements
+  const activeModals = getActiveModalElements();
+  const vCenterY = window.innerHeight / 2;
 
-  // If image dimensions are not loaded yet (for <img>), attach load event listener
-  if (el instanceof HTMLImageElement && (!el.complete || (el.naturalWidth === 0 && el.width === 0))) {
-    const onLoad = () => {
-      el.removeEventListener('load', onLoad);
-      const inVp = isElementInViewport(el);
-      const activeModals = getActiveModalElements();
-      const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
-      if (inVp || isInsideModal) {
-        processElement(el);
+  pendingScanQueue.sort((a, b) => {
+    const aModal = activeModals.length > 0 && isElementInsideActiveModal(a, activeModals);
+    const bModal = activeModals.length > 0 && isElementInsideActiveModal(b, activeModals);
+    if (aModal && !bModal) return -1;
+    if (!aModal && bModal) return 1;
+
+    const aInVp = isElementInViewport(a);
+    const bInVp = isElementInViewport(b);
+    if (aInVp && !bInVp) return -1;
+    if (!aInVp && bInVp) return 1;
+
+    if (aInVp && bInVp) {
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      const aDist = Math.abs(ra.top + ra.height / 2 - vCenterY);
+      const bDist = Math.abs(rb.top + rb.height / 2 - vCenterY);
+      return aDist - bDist;
+    }
+
+    return 0;
+  });
+
+  while (activeScanCount < MAX_CONCURRENT_PAGE_SCANS && pendingScanQueue.length > 0) {
+    const nextEl = pendingScanQueue.shift();
+    if (!nextEl) break;
+
+    if (nextEl.dataset.aiDetectorProcessed === 'true' || nextEl.dataset.aiDetectorProcessed === 'analyzing') {
+      continue;
+    }
+
+    activeScanCount++;
+    processElement(nextEl)
+      .catch(() => {})
+      .finally(() => {
+        activeScanCount--;
+        pumpScanQueue();
+      });
+  }
+}
+
+function processElement(el: HTMLElement): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!isExtensionContextValid()) {
+      resolve();
+      return;
+    }
+
+    // Do not process or queue images while the tab is inactive/hidden
+    if (document.visibilityState === 'hidden') {
+      resolve();
+      return;
+    }
+
+    if (el.dataset.aiDetectorProcessed === 'true' || el.dataset.aiDetectorProcessed === 'analyzing') {
+      resolve();
+      return;
+    }
+
+    // If image dimensions are not loaded yet (for <img>), attach load event listener
+    if (el instanceof HTMLImageElement && (!el.complete || (el.naturalWidth === 0 && el.width === 0))) {
+      const onLoad = () => {
+        el.removeEventListener('load', onLoad);
+        const inVp = isElementInViewport(el);
+        const activeModals = getActiveModalElements();
+        const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+        if (inVp || isInsideModal) {
+          enqueueElementForScan(el);
+        }
+      };
+      el.addEventListener('load', onLoad);
+      resolve();
+      return;
+    }
+
+    if (!isValidTargetElement(el)) {
+      if (el.dataset.aiDetectorProcessed) {
+        removeBadge(el);
+      }
+      resolve();
+      return;
+    }
+
+    const imageUrl = getElementImageUrl(el);
+    if (!imageUrl) {
+      removeBadge(el);
+      resolve();
+      return;
+    }
+
+    // Avoid duplicate in-flight requests for identical images
+    if (inFlightUrls.has(imageUrl)) {
+      resolve();
+      return;
+    }
+
+    el.dataset.aiDetectorProcessed = 'analyzing';
+    injectLoadingBadge(el);
+    inFlightUrls.add(imageUrl);
+
+    const activeModals = getActiveModalElements();
+    const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    const inViewport = isElementInViewport(el);
+    const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
+
+    const sendDataUrlAnalysis = async () => {
+      const dataUrl = await extractImageDataUrl(el);
+      if (!dataUrl || !isExtensionContextValid()) {
+        inFlightUrls.delete(imageUrl);
+        el.dataset.aiDetectorProcessed = 'failed';
+        removeBadge(el, true);
+        resolve();
+        return;
+      }
+
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: 'ANALYZE_IMAGE',
+            imageUrl: dataUrl,
+            priority,
+            isModal: isInsideModal,
+            sampleMode: 'fast'
+          } as ExtensionMessage,
+          (response) => {
+            inFlightUrls.delete(imageUrl);
+            if (!isExtensionContextValid() || chrome.runtime.lastError) {
+              el.dataset.aiDetectorProcessed = 'failed';
+              removeBadge(el, true);
+              resolve();
+              return;
+            }
+            if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
+              if (response.result.status === 'complete') {
+                injectImageBadge(el, response.result);
+                el.dataset.aiDetectorProcessed = 'true';
+              } else if (response.result.status === 'pending') {
+                el.dataset.aiDetectorProcessed = 'pending';
+              } else {
+                el.dataset.aiDetectorProcessed = 'failed';
+                removeBadge(el, true);
+              }
+            } else {
+              el.dataset.aiDetectorProcessed = 'failed';
+              removeBadge(el, true);
+            }
+            resolve();
+          }
+        );
+      } catch {
+        inFlightUrls.delete(imageUrl);
+        el.dataset.aiDetectorProcessed = 'failed';
+        removeBadge(el, true);
+        resolve();
       }
     };
-    el.addEventListener('load', onLoad);
-    return;
-  }
 
-  if (!isValidTargetElement(el)) {
-    if (el.dataset.aiDetectorProcessed) {
-      removeBadge(el);
-    }
-    return;
-  }
-
-  const imageUrl = getElementImageUrl(el);
-  if (!imageUrl) {
-    removeBadge(el);
-    return;
-  }
-
-  // Avoid duplicate in-flight requests for identical images
-  if (inFlightUrls.has(imageUrl)) {
-    return;
-  }
-
-  el.dataset.aiDetectorProcessed = 'analyzing';
-  injectLoadingBadge(el);
-  inFlightUrls.add(imageUrl);
-
-  const activeModals = getActiveModalElements();
-  const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
-  const inViewport = isElementInViewport(el);
-  const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
-
-  const sendDataUrlAnalysis = async () => {
-    const dataUrl = await extractImageDataUrl(el);
-    if (!dataUrl || !isExtensionContextValid()) {
-      inFlightUrls.delete(imageUrl);
-      el.dataset.aiDetectorProcessed = 'failed';
-      removeBadge(el, true);
+    // If URL is file:// or blob://, offscreen cannot fetch it over network; directly send data URL
+    if (imageUrl.startsWith('file:') || imageUrl.startsWith('blob:')) {
+      sendDataUrlAnalysis();
       return;
     }
 
     try {
+      if (!isExtensionContextValid()) {
+        inFlightUrls.delete(imageUrl);
+        removeBadge(el, true);
+        resolve();
+        return;
+      }
+
       chrome.runtime.sendMessage(
         {
           type: 'ANALYZE_IMAGE',
-          imageUrl: dataUrl,
+          imageUrl,
           priority,
           isModal: isInsideModal,
           sampleMode: 'fast'
         } as ExtensionMessage,
-        (response) => {
+        async (response) => {
           inFlightUrls.delete(imageUrl);
           if (!isExtensionContextValid() || chrome.runtime.lastError) {
             el.dataset.aiDetectorProcessed = 'failed';
             removeBadge(el, true);
+            resolve();
             return;
           }
+
           if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
             if (response.result.status === 'complete') {
               injectImageBadge(el, response.result);
               el.dataset.aiDetectorProcessed = 'true';
+              resolve();
             } else if (response.result.status === 'pending') {
               el.dataset.aiDetectorProcessed = 'pending';
+              resolve();
+            } else if (response.result.status === 'error') {
+              const errStr = String(response.result.error || '');
+              if (
+                !errStr.includes('timed out') &&
+                !errStr.includes('cancelled') &&
+                !errStr.includes('queue')
+              ) {
+                await sendDataUrlAnalysis();
+              } else {
+                el.dataset.aiDetectorProcessed = 'failed';
+                removeBadge(el, true);
+                resolve();
+              }
             } else {
               el.dataset.aiDetectorProcessed = 'failed';
               removeBadge(el, true);
+              resolve();
             }
           } else {
             el.dataset.aiDetectorProcessed = 'failed';
             removeBadge(el, true);
+            resolve();
           }
         }
       );
-    } catch {
+    } catch (err) {
       inFlightUrls.delete(imageUrl);
       el.dataset.aiDetectorProcessed = 'failed';
       removeBadge(el, true);
+      resolve();
     }
-  };
-
-  // If URL is file:// or blob://, offscreen cannot fetch it over network; directly send data URL
-  if (imageUrl.startsWith('file:') || imageUrl.startsWith('blob:')) {
-    await sendDataUrlAnalysis();
-    return;
-  }
-
-  try {
-    if (!isExtensionContextValid()) {
-      inFlightUrls.delete(imageUrl);
-      removeBadge(el, true);
-      return;
-    }
-
-    chrome.runtime.sendMessage(
-      {
-        type: 'ANALYZE_IMAGE',
-        imageUrl,
-        priority,
-        isModal: isInsideModal,
-        sampleMode: 'fast'
-      } as ExtensionMessage,
-      async (response) => {
-        inFlightUrls.delete(imageUrl);
-        if (!isExtensionContextValid() || chrome.runtime.lastError) {
-          el.dataset.aiDetectorProcessed = 'failed';
-          removeBadge(el, true);
-          return;
-        }
-
-        if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
-          if (response.result.status === 'complete') {
-            injectImageBadge(el, response.result);
-            el.dataset.aiDetectorProcessed = 'true';
-          } else if (response.result.status === 'pending') {
-            el.dataset.aiDetectorProcessed = 'pending';
-          } else if (response.result.status === 'error') {
-            const errStr = String(response.result.error || '');
-            if (
-              !errStr.includes('timed out') &&
-              !errStr.includes('cancelled') &&
-              !errStr.includes('queue')
-            ) {
-              await sendDataUrlAnalysis();
-            } else {
-              el.dataset.aiDetectorProcessed = 'failed';
-              removeBadge(el, true);
-            }
-          } else {
-            el.dataset.aiDetectorProcessed = 'failed';
-            removeBadge(el, true);
-          }
-        } else {
-          el.dataset.aiDetectorProcessed = 'failed';
-          removeBadge(el, true);
-        }
-      }
-    );
-  } catch (err) {
-    inFlightUrls.delete(imageUrl);
-    el.dataset.aiDetectorProcessed = 'failed';
-    removeBadge(el, true);
-  }
+  });
 }
 
 // Intersection Observer for lazy scanning (50px tight margin so only genuinely visible images scan)
@@ -303,7 +418,7 @@ const observer = new IntersectionObserver(
     for (const entry of entries) {
       if (entry.isIntersecting && entry.target instanceof HTMLElement) {
         if (!entry.target.dataset.aiDetectorProcessed || entry.target.dataset.aiDetectorProcessed === 'pending') {
-          processElement(entry.target);
+          enqueueElementForScan(entry.target);
         }
       }
     }
@@ -326,7 +441,7 @@ const resizeObserver = new ResizeObserver((entries) => {
         const activeModals = getActiveModalElements();
         const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(target, activeModals);
         if (inViewport || isInsideModal) {
-          processElement(target);
+          enqueueElementForScan(target);
         }
       }
     } else {
@@ -351,7 +466,7 @@ function observeElement(el: HTMLElement, immediateCheck = false): void {
   resizeObserver.observe(el);
 
   if (immediateCheck && (!el.dataset.aiDetectorProcessed || el.dataset.aiDetectorProcessed === 'pending')) {
-    processElement(el);
+    enqueueElementForScan(el);
   }
 }
 

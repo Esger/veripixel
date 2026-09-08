@@ -17,14 +17,6 @@ export default defineConfig({
           dest: 'content'
         },
         {
-          src: 'node_modules/onnxruntime-web/dist/*.wasm',
-          dest: 'assets'
-        },
-        {
-          src: 'node_modules/onnxruntime-web/dist/*.mjs',
-          dest: 'assets'
-        },
-        {
           src: 'src/assets/model_q4.onnx',
           dest: 'assets'
         }
@@ -58,7 +50,13 @@ export default defineConfig({
           return 'assets/[name]-[hash].js';
         },
         chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]'
+        assetFileNames: (assetInfo) => {
+          const name = assetInfo.name || (assetInfo.names && assetInfo.names[0]) || '';
+          if (name.endsWith('.wasm')) {
+            return 'assets/[name].[ext]';
+          }
+          return 'assets/[name]-[hash].[ext]';
+        }
       }
     }
   },

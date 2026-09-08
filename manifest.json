@@ -33,7 +33,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "assets/*",
         "content/*"
       ],
       "matches": ["<all_urls>"]

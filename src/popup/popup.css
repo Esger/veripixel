@@ -1,0 +1,337 @@
+/* Global styles for the extension popup */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 350px;
+  min-height: 460px;
+  max-height: 580px;
+  background-color: #0f172a;
+  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* ==========================================================================
+   Popup Component (camelCase BEM)
+   ========================================================================== */
+
+.popupView {
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+/* --- Header --- */
+.popupView__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.popupView__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.popupView__brandIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 16px;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+}
+
+.popupView__brandText {
+  display: flex;
+  flex-direction: column;
+}
+
+.popupView__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: #f8fafc;
+}
+
+.popupView__subtitle {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* --- Live Scanning Status Badge --- */
+.popupView__liveBadge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10b981;
+  color: #34d399;
+}
+
+.popupView__liveBadge--scanning {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  color: #60a5fa;
+}
+
+.popupView__liveDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.popupView__liveDot--scanning {
+  background-color: #3b82f6;
+  box-shadow: 0 0 6px #3b82f6;
+}
+
+/* --- Metrics Grid --- */
+.popupView__metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.popupView__metricCard {
+  background: #1e293b;
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  text-align: center;
+}
+
+.popupView__metricCard--fake {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.popupView__metricCard--fake .popupView__metricLabel {
+  color: #fca5a5;
+}
+
+.popupView__metricCard--fake .popupView__metricValue {
+  color: #ef4444;
+}
+
+.popupView__metricCard--edited {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.popupView__metricCard--edited .popupView__metricLabel {
+  color: #fcd34d;
+}
+
+.popupView__metricCard--edited .popupView__metricValue {
+  color: #f59e0b;
+}
+
+.popupView__metricCard--real {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.popupView__metricCard--real .popupView__metricLabel {
+  color: #6ee7b7;
+}
+
+.popupView__metricCard--real .popupView__metricValue {
+  color: #10b981;
+}
+
+.popupView__metricLabel {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.popupView__metricValue {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 2px;
+  color: #f8fafc;
+}
+
+/* --- Scanned Images Feed --- */
+.popupView__feedSection {
+  margin-bottom: 14px;
+}
+
+.popupView__feedHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.popupView__emptyState {
+  padding: 24px 16px;
+  text-align: center;
+  border-radius: 8px;
+  background: #1e293b;
+  border: 1px dashed #334155;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.popupView__imageList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 230px;
+  overflow-y: auto;
+}
+
+.popupView__imageCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.popupView__imageCard:hover {
+  border-color: #3b82f6;
+  background: #283548;
+}
+
+.popupView__thumbnail {
+  width: 38px;
+  height: 38px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #0f172a;
+  flex-shrink: 0;
+}
+
+.popupView__imageDetails {
+  flex: 1;
+  min-width: 0;
+}
+
+.popupView__tagGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.popupView__verdictBadge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.popupView__verdictBadge--ai {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid #ef4444;
+  color: #ef4444;
+}
+
+.popupView__verdictBadge--edited {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid #f59e0b;
+  color: #f59e0b;
+}
+
+.popupView__verdictBadge--real {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10b981;
+  color: #10b981;
+}
+
+.popupView__c2paTag {
+  font-size: 9px;
+  background: #334155;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #93c5fd;
+}
+
+.popupView__cameraTag {
+  font-size: 9px;
+  background: #334155;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80px;
+}
+
+.popupView__imageTitle {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popupView__jumpIcon {
+  font-size: 11px;
+  color: #64748b;
+}
+
+/* --- Action Footer --- */
+.popupView__rescanBtn {
+  width: 100%;
+  padding: 9px;
+  border-radius: 8px;
+  border: 1px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.popupView__rescanBtn:hover {
+  background: rgba(59, 130, 246, 0.3);
+  border-color: #60a5fa;
+}
