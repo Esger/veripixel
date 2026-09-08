@@ -9,6 +9,7 @@ interface BadgeEntry {
   regionEls: HTMLElement[];
   patches?: PatchResult[];
   result?: AnalysisResult;
+  isDeepening?: boolean;
 }
 
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
@@ -429,6 +430,46 @@ export function updateBadgePosition(targetEl: HTMLElement, activeModals?: HTMLEl
   showBadgeForEntry(entry, targetEl);
 }
 
+function triggerRegionalDeepening(targetEl: HTMLElement, entry: BadgeEntry): void {
+  if (!entry.result || entry.result.sampleMode !== 'fast') return;
+  if (entry.isDeepening) return;
+  entry.isDeepening = true;
+
+  const deepeningNotice = entry.tooltipEl.querySelector('.detectorTooltip__deepeningNotice');
+  if (deepeningNotice) {
+    deepeningNotice.innerHTML = `<span class="detectorTooltip__deepeningSpinner"></span> Inspecting full regions...`;
+  }
+
+  try {
+    chrome.runtime.sendMessage(
+      {
+        type: 'ANALYZE_IMAGE',
+        imageUrl: entry.result.imageUrl,
+        sampleMode: 'standard',
+        priority: 'high'
+      },
+      (response) => {
+        entry.isDeepening = false;
+        if (chrome.runtime.lastError || !response || !response.result) return;
+        if (response.result.status === 'complete') {
+          const wasTooltipOpen = entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open');
+          injectImageBadge(targetEl, response.result);
+          if (wasTooltipOpen) {
+            const currentEntry = badgeRegistry.get(targetEl);
+            if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
+            try {
+              entry.tooltipEl.hidePopover();
+              entry.tooltipEl.showPopover();
+            } catch (e) {}
+          }
+        }
+      }
+    );
+  } catch (e) {
+    entry.isDeepening = false;
+  }
+}
+
 export function injectLoadingBadge(targetEl: HTMLElement): void {
   if (targetEl.dataset.aiDetectorBadgeInjected) {
     return;
@@ -484,6 +525,15 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
     tooltipEl.addEventListener(type, stopOnly);
   });
 
+  const triggerDeepening = () => {
+    const currentEntry = badgeRegistry.get(targetEl);
+    if (currentEntry && currentEntry.result && currentEntry.result.sampleMode === 'fast') {
+      triggerRegionalDeepening(targetEl, currentEntry);
+    }
+  };
+
+  badgeEl.addEventListener('mouseenter', triggerDeepening);
+
   badgeEl.addEventListener('click', (e) => {
     preventAndStop(e);
 
@@ -496,6 +546,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
       if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
       // Open tooltip popover second so it appears on top of the region markers
       tooltipEl.showPopover();
+      triggerDeepening();
     }
   });
 
@@ -522,8 +573,8 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   if (!isModalActive || isInsideModal) {
     try {
       badgeEl.showPopover();
-    } catch (e) {
-      console.warn('[Overlay] showPopover failed:', e);
+    } catch {
+      // Ignore if element is detached or popover state transition in progress
     }
   }
   updateBadgePosition(targetEl, activeModals);
@@ -691,7 +742,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     .join('');
 
   let switchButtonHtml = '';
-  if (result.supportsDeepSampling) {
+  if (result.supportsDeepSampling && result.sampleMode !== 'fast') {
     const btnText = isDeepActive
       ? 'Switch to standard (4 samples)'
       : `Switch to ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})`;
@@ -699,6 +750,15 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       <button class="detectorTooltip__sampleToggleBtn ${isDeepActive ? 'detectorTooltip__sampleToggleBtn--active' : ''}">
         ${btnText}
       </button>
+    `;
+  }
+
+  let deepeningHtml = '';
+  if (result.sampleMode === 'fast') {
+    deepeningHtml = `
+      <div class="detectorTooltip__deepeningNotice">
+        <span class="detectorTooltip__deepeningSpinner"></span> Inspecting full regions...
+      </div>
     `;
   }
 
@@ -740,6 +800,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     <div class="${gridClass}">
       ${patchesHtml}
     </div>
+    ${deepeningHtml}
     ${assessmentHtml}
     ${switchButtonHtml}
   `;

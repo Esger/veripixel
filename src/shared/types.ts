@@ -56,7 +56,7 @@ export interface AnalysisResult {
   supportsDeepSampling?: boolean;
   deepGrid?: GridDimensions;
   currentGrid?: GridDimensions;
-  sampleMode?: 'standard' | 'deep';
+  sampleMode?: 'fast' | 'standard' | 'deep';
   imageWidth?: number;
   imageHeight?: number;
   error?: string;
@@ -89,7 +89,7 @@ export type ExtensionMessage =
       imageUrl: string;
       priority?: 'high' | 'normal';
       isModal?: boolean;
-      sampleMode?: 'standard' | 'deep';
+      sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
     }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
@@ -102,7 +102,7 @@ export type ExtensionMessage =
       tabId?: number;
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
-      sampleMode?: 'standard' | 'deep';
+      sampleMode?: 'fast' | 'standard' | 'deep';
     }
   | {
       type: 'PROCESS_IMAGE_BUFFER';
@@ -112,7 +112,7 @@ export type ExtensionMessage =
       tabId?: number;
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
-      sampleMode?: 'standard' | 'deep';
+      sampleMode?: 'fast' | 'standard' | 'deep';
     }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }
@@ -130,6 +130,6 @@ export type ExtensionMessage =
       tabId?: number;
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
-      sampleMode?: 'standard' | 'deep';
+      sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
     };

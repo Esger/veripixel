@@ -2,23 +2,24 @@ import exifr from 'exifr';
 import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runBatchedPatchInference } from './model-runner';
+import { logger } from './logger';
 // Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
 // so that Chrome's extension manager does not collect them as extension errors.
 const originalConsoleError = console.error;
 console.error = (...args: any[]) => {
+  const msg = args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ');
   if (
-    typeof args[0] === 'string' &&
-    (args[0].includes('[W:onnxruntime:') ||
-      args[0].includes('[I:onnxruntime:') ||
-      args[0].includes('VerifyEachNodeIsAssignedToAnEp'))
+    msg.includes('[W:onnxruntime:') ||
+    msg.includes('[I:onnxruntime:') ||
+    msg.includes('VerifyEachNodeIsAssignedToAnEp')
   ) {
-    console.warn(...args);
+    logger.warn(...args);
     return;
   }
   originalConsoleError.apply(console, args);
 };
 
-console.log('[Offscreen] Document script active.');
+logger.log('[Offscreen] Document script active.');
 
 interface QueuedTask {
   tabId?: number;
@@ -37,13 +38,13 @@ class PriorityConcurrencyQueue {
 
   constructor(
     private maxConcurrent = 1,
-    private maxQueue = 50
+    private maxQueue = 20
   ) {}
 
   setActiveTab(tabId: number): void {
     this.activeTabId = tabId;
     this.reSortQueue();
-    console.log(`[Offscreen Queue] Active tab set to ${tabId}, re-sorted ${this.queue.length} tasks`);
+    logger.log(`[Offscreen Queue] Active tab set to ${tabId}, re-sorted ${this.queue.length} tasks`);
   }
 
   cancelTasksForTab(tabId: number): void {
@@ -59,7 +60,7 @@ class PriorityConcurrencyQueue {
     }
     this.queue = remaining;
     if (cancelledCount > 0) {
-      console.log(`[Offscreen Queue] Cancelled ${cancelledCount} pending tasks for tab ${tabId}`);
+      logger.log(`[Offscreen Queue] Cancelled ${cancelledCount} pending tasks for tab ${tabId}`);
     }
   }
 
@@ -87,6 +88,8 @@ class PriorityConcurrencyQueue {
     isModal = false,
     tabId?: number
   ): Promise<T | null> {
+    const enqueuedAt = Date.now();
+
     if (this.active >= this.maxConcurrent) {
       const waitPromise = new Promise<boolean>((resolve) => {
         const item: QueuedTask = {
@@ -95,7 +98,7 @@ class PriorityConcurrencyQueue {
           cancel: () => resolve(false),
           priority,
           isModal,
-          enqueuedAt: Date.now()
+          enqueuedAt
         };
 
         // If queue exceeds maxQueue, prune the oldest low-priority background task
@@ -120,16 +123,27 @@ class PriorityConcurrencyQueue {
         // Gracefully cancelled without throwing errors
         return null;
       }
+    } else {
+      this.active++;
     }
 
-    this.active++;
     try {
+      // Drop task if it waited in the queue for too long (>25s) to avoid running expired work
+      if (Date.now() - enqueuedAt > 25000) {
+        logger.warn(`[Offscreen Queue] Task dropped: waited in queue ${Date.now() - enqueuedAt}ms`);
+        return null;
+      }
       return await task();
     } finally {
-      this.active--;
       if (this.queue.length > 0) {
         const next = this.queue.shift();
-        if (next) next.run();
+        if (next) {
+          next.run();
+        } else {
+          this.active--;
+        }
+      } else {
+        this.active--;
       }
     }
   }
@@ -253,46 +267,42 @@ function generateForensicReasoning(
   };
 }
 
-// Process an incoming image array buffer
-async function processImageBuffer(
+// Core image processing pipeline for both blobs, buffers, and URLs
+async function processImageBlob(
+  blob: Blob,
   imageUrl: string,
-  buffer: number[],
-  contentType = 'image/jpeg',
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
+  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid)
+  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+
+  // 2. Extract EXIF / Metadata
+  const metadata = await extractMetadata(blob);
+
+  if (extraction.patches.length === 0) {
+    return {
+      imageUrl,
+      status: 'error',
+      aiScore: 0,
+      patchScores: [],
+      metadata,
+      timestamp: Date.now(),
+      supportsDeepSampling: false,
+      deepGrid: extraction.deepGrid,
+      currentGrid: extraction.currentGrid,
+      sampleMode,
+      imageWidth: extraction.width,
+      imageHeight: extraction.height,
+      error: 'Image too small (<224x224)'
+    };
+  }
+
+  // 3. Serialized ONNX model inference inside priority concurrency queue
   return queue.run(
     async () => {
-      const uint8Array = new Uint8Array(buffer);
-      const blob = new Blob([uint8Array], { type: contentType });
-
-      // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
-      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
-
-      // 2. Extract EXIF / Metadata
-      const metadata = await extractMetadata(blob);
-
-      if (extraction.patches.length === 0) {
-        return {
-          imageUrl,
-          status: 'error',
-          aiScore: 0,
-          patchScores: [],
-          metadata,
-          timestamp: Date.now(),
-          supportsDeepSampling: false,
-          deepGrid: extraction.deepGrid,
-          currentGrid: extraction.currentGrid,
-          sampleMode,
-          imageWidth: extraction.width,
-          imageHeight: extraction.height,
-          error: 'Image too small (<224x224)'
-        };
-      }
-
-      // 3. Compute patch scores via ONNX Runtime Web
       const patchCanvases = extraction.patches.map((p) => p.canvas);
       const patchScoresList = await runBatchedPatchInference(patchCanvases);
 
@@ -337,94 +347,51 @@ async function processImageBuffer(
   );
 }
 
+// Process an incoming image array buffer
+async function processImageBuffer(
+  imageUrl: string,
+  buffer: number[],
+  contentType = 'image/jpeg',
+  tabId?: number,
+  priority: 'high' | 'normal' | 'background' = 'normal',
+  isModal = false,
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+): Promise<AnalysisResult | null> {
+  const uint8Array = new Uint8Array(buffer);
+  const blob = new Blob([uint8Array], { type: contentType });
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+}
+
 // Process an incoming image URL directly in offscreen without IPC serialization overhead
 async function processImageUrl(
   imageUrl: string,
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
 ): Promise<AnalysisResult | null> {
-  return queue.run(
-    async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
-      let blob: Blob;
-      try {
-        const response = await fetch(imageUrl, { signal: controller.signal });
-        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-        blob = await response.blob();
-      } finally {
-        clearTimeout(timeoutId);
-      }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
+  let blob: Blob;
+  try {
+    const response = await fetch(imageUrl, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+    blob = await response.blob();
+  } catch (fetchErr) {
+    return {
+      imageUrl,
+      status: 'error',
+      aiScore: 0,
+      patchScores: [],
+      metadata: { exifPresent: false, c2paPresent: false, qualityScore: 0.5 },
+      timestamp: Date.now(),
+      error: `Network fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
-      // 1. Extract patches (standard 2x2 or deep 3x2, 2x3, 3x3 grid)
-      const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
-
-      // 2. Extract EXIF / Metadata
-      const metadata = await extractMetadata(blob);
-
-      if (extraction.patches.length === 0) {
-        return {
-          imageUrl,
-          status: 'error',
-          aiScore: 0,
-          patchScores: [],
-          metadata,
-          timestamp: Date.now(),
-          supportsDeepSampling: false,
-          deepGrid: extraction.deepGrid,
-          currentGrid: extraction.currentGrid,
-          sampleMode,
-          imageWidth: extraction.width,
-          imageHeight: extraction.height,
-          error: 'Image too small (<224x224)'
-        };
-      }
-
-      // 3. Compute patch scores via ONNX Runtime Web
-      const patchCanvases = extraction.patches.map((p) => p.canvas);
-      const patchScoresList = await runBatchedPatchInference(patchCanvases);
-
-      const patchScores: PatchResult[] = extraction.patches.map((patch, i) => ({
-        patchIndex: patch.patchIndex,
-        position: patch.position,
-        aiScore: patchScoresList[i] ?? 0.5,
-        box: patch.box
-      }));
-
-      // Aggregate overall score
-      const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
-      const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
-
-      let baseScore = maxPatchScore * 0.6 + avgPatchScore * 0.4;
-      if (metadata.c2paPresent) {
-        baseScore = Math.max(0.01, baseScore - 0.3);
-      }
-
-      const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
-      const reasoning = generateForensicReasoning(patchScores, metadata);
-
-      return {
-        imageUrl,
-        status: 'complete',
-        aiScore: aggregatedScore,
-        patchScores,
-        metadata,
-        timestamp: Date.now(),
-        reasoning,
-        supportsDeepSampling: extraction.supportsDeepSampling,
-        deepGrid: extraction.deepGrid,
-        currentGrid: extraction.currentGrid,
-        sampleMode: extraction.sampleMode,
-        imageWidth: extraction.width,
-        imageHeight: extraction.height
-      };
-    },
-    priority,
-    isModal,
-    tabId
-  );
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
 }
 
 // Listen for background service worker requests

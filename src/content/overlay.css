@@ -5,6 +5,11 @@
   100% { background-color: #10B981; box-shadow: 0 0 6px #10B981; }
 }
 
+@keyframes detectorSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .detectorBadge {
   position: fixed;
   position-anchor: var(--badge-anchor);
@@ -200,12 +205,37 @@
   border-top: 1px solid #1E293B;
 }
 
+.detectorTooltip__patchesGrid--1Cols {
+  grid-template-columns: 1fr;
+}
+
 .detectorTooltip__patchesGrid--2Cols {
   grid-template-columns: 1fr 1fr;
 }
 
 .detectorTooltip__patchesGrid--3Cols {
   grid-template-columns: 1fr 1fr 1fr;
+}
+
+.detectorTooltip__deepeningNotice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: #94A3B8;
+}
+
+.detectorTooltip__deepeningSpinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgba(148, 163, 184, 0.3);
+  border-top-color: #38BDF8;
+  border-radius: 50%;
+  animation: detectorSpin 0.8s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 .detectorTooltip__patchItem {

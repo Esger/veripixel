@@ -1,15 +1,39 @@
 import { ExtensionMessage, AnalysisResult, TabScanStats, ImageSummary } from '../shared/types';
+import { logger } from './logger';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 
-// Cache for results in session storage
+// Cache for results in session storage using SHA-256 hash keys to prevent quota exhaustion from data URLs
+async function getCacheKey(url: string): Promise<string> {
+  if (url.length > 128 || url.startsWith('data:')) {
+    const data = new TextEncoder().encode(url);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashHex = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    return `img_${hashHex}`;
+  }
+  return `img_${url}`;
+}
+
 async function getCachedResult(url: string): Promise<AnalysisResult | null> {
-  const data = await chrome.storage.session.get(`img_${url}`);
-  return (data[`img_${url}`] as AnalysisResult) || null;
+  try {
+    const key = await getCacheKey(url);
+    const data = await chrome.storage.session.get(key);
+    return (data[key] as AnalysisResult) || null;
+  } catch (e) {
+    logger.warn('[Background] Failed to get cached result:', e);
+    return null;
+  }
 }
 
 async function setCachedResult(url: string, result: AnalysisResult): Promise<void> {
-  await chrome.storage.session.set({ [`img_${url}`]: result });
+  try {
+    const key = await getCacheKey(url);
+    await chrome.storage.session.set({ [key]: result });
+  } catch (e) {
+    logger.warn('[Background] Failed to set cached result:', e);
+  }
 }
 
 let creatingOffscreenPromise: Promise<void> | null = null;
@@ -63,25 +87,25 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
             reasons: [chrome.offscreen.Reason.BLOBS, chrome.offscreen.Reason.DOM_PARSER],
             justification: 'AI Model Inference using ONNX Runtime Web and DOM Canvas image cropping'
           });
-          console.log('[Background] Offscreen Document created successfully.');
+          logger.log('[Background] Offscreen Document created successfully.');
         }
 
         // Wait for offscreen script to evaluate and respond to ping (up to 2 seconds)
         for (let i = 0; i < 20; i++) {
           const ready = await pingOffscreen(100);
           if (ready) {
-            console.log('[Background] Verified Offscreen Document script is ready and listening.');
+            logger.log('[Background] Verified Offscreen Document script is ready and listening.');
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        console.warn('[Background] Offscreen Document created, ping timed out; proceeding anyway.');
+        logger.warn('[Background] Offscreen Document created, ping timed out; proceeding anyway.');
       } catch (err: any) {
         const msg = String(err?.message || err || '');
         if (msg.includes('single offscreen document') || msg.includes('already exists')) {
-          console.log('[Background] Offscreen document already active.');
+          logger.log('[Background] Offscreen document already active.');
         } else {
-          console.error('[Background] Failed to create offscreen document:', err);
+          logger.error('[Background] Failed to create offscreen document:', err);
         }
       } finally {
         creatingOffscreenPromise = null;
@@ -92,14 +116,28 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
   await creatingOffscreenPromise;
 }
 
-
-// Per-tab scan statistics for toolbar badge and real-time popup updates
+// Per-tab scan statistics with chrome.storage.session persistence to survive MV3 30s service worker shutdowns
 const tabStatsMap = new Map<number, TabScanStats>();
+const tabStatsLoadingMap = new Map<number, Promise<TabScanStats>>();
 
-export function getOrCreateTabStats(tabId: number): TabScanStats {
-  let stats = tabStatsMap.get(tabId);
-  if (!stats) {
-    stats = {
+export async function getOrCreateTabStats(tabId: number): Promise<TabScanStats> {
+  const memoryStats = tabStatsMap.get(tabId);
+  if (memoryStats) return memoryStats;
+
+  const pending = tabStatsLoadingMap.get(tabId);
+  if (pending) return await pending;
+
+  const loadPromise = (async () => {
+    try {
+      const stored = await chrome.storage.session.get(`tab_${tabId}`);
+      if (stored && stored[`tab_${tabId}`]) {
+        const stats = stored[`tab_${tabId}`] as TabScanStats;
+        tabStatsMap.set(tabId, stats);
+        return stats;
+      }
+    } catch (e) {}
+
+    const newStats: TabScanStats = {
       tabId,
       totalScanned: 0,
       aiDetected: 0,
@@ -108,9 +146,26 @@ export function getOrCreateTabStats(tabId: number): TabScanStats {
       isScanning: false,
       images: []
     };
-    tabStatsMap.set(tabId, stats);
+    tabStatsMap.set(tabId, newStats);
+    await chrome.storage.session.set({ [`tab_${tabId}`]: newStats }).catch(() => {});
+    return newStats;
+  })();
+
+  tabStatsLoadingMap.set(tabId, loadPromise);
+  try {
+    return await loadPromise;
+  } finally {
+    tabStatsLoadingMap.delete(tabId);
   }
-  return stats;
+}
+
+async function saveTabStats(stats: TabScanStats): Promise<void> {
+  tabStatsMap.set(stats.tabId, stats);
+  try {
+    await chrome.storage.session.set({ [`tab_${stats.tabId}`]: stats });
+  } catch (e) {
+    logger.warn('[Background] Failed to persist tab stats:', e);
+  }
 }
 
 function updateTabToolbarBadge(tabId: number, stats: TabScanStats): void {
@@ -174,6 +229,7 @@ if (chrome.windows?.onFocusChanged) {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
     tabStatsMap.delete(tabId);
+    chrome.storage.session.remove(`tab_${tabId}`).catch(() => {});
     if (chrome.action) {
       chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
     }
@@ -187,6 +243,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 // Clean up memory and cancel tasks when a tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabStatsMap.delete(tabId);
+  chrome.storage.session.remove(`tab_${tabId}`).catch(() => {});
   chrome.runtime.sendMessage({
     type: 'CANCEL_TAB_TASKS',
     tabId
@@ -217,8 +274,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
       try {
         if (tabId !== undefined) {
-          const stats = getOrCreateTabStats(tabId);
+          const stats = await getOrCreateTabStats(tabId);
           stats.isScanning = true;
+          await saveTabStats(stats);
           updateTabToolbarBadge(tabId, stats);
           broadcastTabStatsUpdate(stats);
         }
@@ -226,19 +284,24 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         // Check cache first (unless forceRescan is requested or sampleMode differs)
         if (!forceRescan) {
           const cached = await getCachedResult(imageUrl);
-          if (
-            cached &&
-            (cached.sampleMode === requestedSampleMode || (!cached.sampleMode && requestedSampleMode === 'standard'))
-          ) {
-            if (tabId !== undefined) {
-              const stats = getOrCreateTabStats(tabId);
-              stats.isScanning = false;
-              recordTabImageResult(stats, cached);
-              updateTabToolbarBadge(tabId, stats);
-              broadcastTabStatsUpdate(stats);
+          if (cached) {
+            const isCacheCompatible =
+              cached.sampleMode === requestedSampleMode ||
+              (!cached.sampleMode && requestedSampleMode === 'standard') ||
+              (requestedSampleMode === 'fast' && (cached.sampleMode === 'standard' || cached.sampleMode === 'deep'));
+
+            if (isCacheCompatible) {
+              if (tabId !== undefined) {
+                const stats = await getOrCreateTabStats(tabId);
+                stats.isScanning = false;
+                recordTabImageResult(stats, cached);
+                await saveTabStats(stats);
+                updateTabToolbarBadge(tabId, stats);
+                broadcastTabStatsUpdate(stats);
+              }
+              sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
+              return;
             }
-            sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
-            return;
           }
         }
 
@@ -266,13 +329,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
               };
 
         let responseHandled = false;
-        const relayTimer = setTimeout(() => {
+        const relayTimer = setTimeout(async () => {
           if (!responseHandled) {
             responseHandled = true;
-            console.warn('[Background] Offscreen processing timed out (45s) for:', imageUrl);
+            logger.warn('[Background] Offscreen processing timed out (45s) for:', imageUrl);
             if (tabId !== undefined) {
-              const stats = getOrCreateTabStats(tabId);
+              const stats = await getOrCreateTabStats(tabId);
               stats.isScanning = false;
+              await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
             }
@@ -297,23 +361,25 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           clearTimeout(relayTimer);
 
           if (chrome.runtime.lastError) {
-            console.warn('[Background] Message error to offscreen:', chrome.runtime.lastError.message);
+            logger.warn('[Background] Message error to offscreen:', chrome.runtime.lastError.message);
           }
 
           if (response && response.result) {
             await setCachedResult(imageUrl, response.result);
             if (tabId !== undefined) {
-              const stats = getOrCreateTabStats(tabId);
+              const stats = await getOrCreateTabStats(tabId);
               stats.isScanning = false;
               recordTabImageResult(stats, response.result);
+              await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
             }
             sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: response.result });
           } else if (response && response.cancelled) {
             if (tabId !== undefined) {
-              const stats = getOrCreateTabStats(tabId);
+              const stats = await getOrCreateTabStats(tabId);
               stats.isScanning = false;
+              await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
             }
@@ -330,8 +396,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
             });
           } else {
             if (tabId !== undefined) {
-              const stats = getOrCreateTabStats(tabId);
+              const stats = await getOrCreateTabStats(tabId);
               stats.isScanning = false;
+              await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
             }
@@ -350,10 +417,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           }
         });
       } catch (err) {
-        console.error('[Background] Error handling image analysis:', err);
+        logger.error('[Background] Error handling image analysis:', err);
         if (tabId !== undefined) {
-          const stats = getOrCreateTabStats(tabId);
+          const stats = await getOrCreateTabStats(tabId);
           stats.isScanning = false;
+          await saveTabStats(stats);
           updateTabToolbarBadge(tabId, stats);
           broadcastTabStatsUpdate(stats);
         }
@@ -388,34 +456,36 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
 
   if (message.type === 'GET_TAB_STATS') {
-    const targetTabId = message.tabId;
-    if (targetTabId !== undefined) {
-      const stats = getOrCreateTabStats(targetTabId);
-      sendResponse({ type: 'TAB_STATS_RESULT', stats });
-    } else {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const activeId = tabs[0]?.id;
-        const stats = activeId !== undefined ? getOrCreateTabStats(activeId) : {
-          tabId: 0,
-          totalScanned: 0,
-          aiDetected: 0,
-          suspectedAi: 0,
-          likelyReal: 0,
-          isScanning: false,
-          images: []
-        };
+    (async () => {
+      const targetTabId = message.tabId;
+      if (targetTabId !== undefined) {
+        const stats = await getOrCreateTabStats(targetTabId);
         sendResponse({ type: 'TAB_STATS_RESULT', stats });
-      });
-    }
+      } else {
+        chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+          const activeId = tabs[0]?.id;
+          const stats = activeId !== undefined ? await getOrCreateTabStats(activeId) : {
+            tabId: 0,
+            totalScanned: 0,
+            aiDetected: 0,
+            suspectedAi: 0,
+            likelyReal: 0,
+            isScanning: false,
+            images: []
+          };
+          sendResponse({ type: 'TAB_STATS_RESULT', stats });
+        });
+      }
+    })();
     return true;
   }
 
   if (message.type === 'GET_PAGE_STATS') {
     (async () => {
       const allData = await chrome.storage.session.get(null);
-      const results = Object.values(allData).filter(
-        (val): val is AnalysisResult => typeof val === 'object' && val !== null && 'aiScore' in val
-      );
+      const results = Object.entries(allData)
+        .filter(([key, val]) => key.startsWith('img_') && typeof val === 'object' && val !== null && 'aiScore' in val)
+        .map(([, val]) => val as AnalysisResult);
       const total = results.length;
       const aiDetected = results.filter((r) => r.aiScore >= 0.7).length;
 
@@ -449,6 +519,10 @@ function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void
     stats.images[existingIdx] = summaryItem;
   } else {
     stats.images.unshift(summaryItem);
+    // Cap images at 100 entries to protect session storage quota
+    if (stats.images.length > 100) {
+      stats.images.length = 100;
+    }
   }
 
   stats.totalScanned = stats.images.length;
@@ -457,4 +531,4 @@ function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void
   stats.likelyReal = stats.images.filter((img) => img.aiScore < 0.3).length;
 }
 
-console.log('[Background] Service worker initialized.');
+logger.log('[Background] Service worker initialized.');
