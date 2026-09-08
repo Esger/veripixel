@@ -168,8 +168,81 @@ async function saveTabStats(stats: TabScanStats): Promise<void> {
   }
 }
 
+const ON_ICONS = {
+  16: 'assets/icons/icon-16.png',
+  32: 'assets/icons/icon-32.png',
+  48: 'assets/icons/icon-48.png',
+  128: 'assets/icons/icon-128.png'
+};
+
+const OFF_ICONS = {
+  16: 'assets/icons/icon-off-16.png',
+  32: 'assets/icons/icon-off-32.png',
+  48: 'assets/icons/icon-off-48.png',
+  128: 'assets/icons/icon-off-128.png'
+};
+
+let isExtensionEnabled = true;
+
+// Load persisted state from chrome.storage.local on startup
+chrome.storage.local.get('extensionEnabled', (res) => {
+  if (res && typeof res.extensionEnabled === 'boolean') {
+    isExtensionEnabled = res.extensionEnabled;
+  } else {
+    isExtensionEnabled = true;
+    chrome.storage.local.set({ extensionEnabled: true });
+  }
+  updateGlobalToolbarState();
+});
+
+// React to state changes from popup or background
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.extensionEnabled) {
+    isExtensionEnabled = changes.extensionEnabled.newValue;
+    updateGlobalToolbarState();
+    broadcastGlobalState(isExtensionEnabled);
+  }
+});
+
+function updateGlobalToolbarState(): void {
+  if (!chrome.action) return;
+  try {
+    if (isExtensionEnabled) {
+      chrome.action.setIcon({ path: ON_ICONS }).catch(() => {});
+      chrome.action.setBadgeText({ text: '' }).catch(() => {});
+      for (const [tabId, stats] of tabStatsMap.entries()) {
+        updateTabToolbarBadge(tabId, stats);
+      }
+    } else {
+      chrome.action.setIcon({ path: OFF_ICONS }).catch(() => {});
+      chrome.action.setBadgeText({ text: 'OFF' }).catch(() => {});
+      chrome.action.setBadgeBackgroundColor({ color: '#6B7280' }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
+function broadcastGlobalState(enabled: boolean): void {
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id !== undefined) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'GLOBAL_STATE_CHANGED',
+            enabled
+          } as ExtensionMessage).catch(() => {});
+        }
+      }
+    });
+  } catch (e) {}
+}
+
 function updateTabToolbarBadge(tabId: number, stats: TabScanStats): void {
   if (!chrome.action) return;
+  if (!isExtensionEnabled) {
+    chrome.action.setBadgeText({ tabId, text: 'OFF' }).catch(() => {});
+    chrome.action.setBadgeBackgroundColor({ tabId, color: '#6B7280' }).catch(() => {});
+    return;
+  }
   try {
     if (stats.aiDetected > 0) {
       chrome.action.setBadgeText({ tabId, text: `${stats.aiDetected}` }).catch(() => {});
@@ -271,6 +344,22 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       const isSenderActive = tabId !== undefined && currentActiveTabId !== null && tabId === currentActiveTabId;
       const effectivePriority: 'high' | 'normal' | 'background' =
         isModal || priority === 'high' ? 'high' : isSenderActive ? 'normal' : 'background';
+
+      if (!isExtensionEnabled) {
+        sendResponse({
+          type: 'IMAGE_ANALYSIS_RESULT',
+          result: {
+            imageUrl,
+            status: 'error',
+            aiScore: 0,
+            patchScores: [],
+            metadata: { exifPresent: false, c2paPresent: false, qualityScore: 0 },
+            timestamp: Date.now(),
+            error: 'Extension is disabled'
+          }
+        });
+        return;
+      }
 
       try {
         if (tabId !== undefined) {
@@ -494,6 +583,21 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         stats: { total, analyzed: total, aiDetected }
       });
     })();
+    return true;
+  }
+
+  if (message.type === 'GET_GLOBAL_STATE') {
+    sendResponse({ enabled: isExtensionEnabled });
+    return false;
+  }
+
+  if (message.type === 'SET_GLOBAL_STATE') {
+    isExtensionEnabled = message.enabled;
+    chrome.storage.local.set({ extensionEnabled: message.enabled }, () => {
+      updateGlobalToolbarState();
+      broadcastGlobalState(message.enabled);
+      sendResponse({ status: 'ok', enabled: message.enabled });
+    });
     return true;
   }
 

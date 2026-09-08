@@ -14,10 +14,25 @@ const Popup: React.FC = () => {
     isScanning: false,
     images: []
   });
+  const [isEnabled, setIsEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Query the active tab and load its initial scan stats
+    // 1. Query persisted global enabled state
+    chrome.storage.local.get('extensionEnabled', (res) => {
+      if (res && typeof res.extensionEnabled === 'boolean') {
+        setIsEnabled(res.extensionEnabled);
+      }
+    });
+
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, area: string) => {
+      if (area === 'local' && changes.extensionEnabled) {
+        setIsEnabled(changes.extensionEnabled.newValue);
+      }
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
+
+    // 2. Query the active tab and load its initial scan stats
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id;
       if (tabId !== undefined) {
@@ -33,7 +48,7 @@ const Popup: React.FC = () => {
       }
     });
 
-    // 2. Listen for real-time background scan updates
+    // 3. Listen for real-time background scan updates
     const handleMessage = (message: any) => {
       if (message.type === 'TAB_STATS_UPDATED') {
         setActiveTabId((currentTabId) => {
@@ -48,8 +63,15 @@ const Popup: React.FC = () => {
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => {
       chrome.runtime.onMessage.removeListener(handleMessage);
+      chrome.storage.onChanged.removeListener(handleStorageChange);
     };
   }, []);
+
+  const handleToggleEnabled = () => {
+    const next = !isEnabled;
+    setIsEnabled(next);
+    chrome.storage.local.set({ extensionEnabled: next });
+  };
 
   const handleImageClick = (imageUrl: string) => {
     if (!activeTabId) return;
@@ -71,19 +93,68 @@ const Popup: React.FC = () => {
       {/* Header */}
       <div className="popupView__header">
         <div className="popupView__brand">
-          <div className="popupView__brandIcon">🛡️</div>
+          <div className="popupView__brandIcon">{isEnabled ? '🛡️' : '⏸️'}</div>
           <div className="popupView__brandText">
             <h2 className="popupView__title">AI Image Detector</h2>
             <span className="popupView__subtitle">Client-Side ONNX Engine</span>
           </div>
         </div>
 
-        {/* Live scanning indicator badge */}
-        <div className={`popupView__liveBadge ${stats.isScanning ? 'popupView__liveBadge--scanning' : ''}`}>
-          <span className={`popupView__liveDot ${stats.isScanning ? 'popupView__liveDot--scanning' : ''}`} />
-          {stats.isScanning ? 'Scanning...' : 'Live'}
+        <div className="popupView__headerActions">
+          {/* Live / Paused scanning indicator badge */}
+          <div
+            className={`popupView__liveBadge ${
+              !isEnabled
+                ? 'popupView__liveBadge--disabled'
+                : stats.isScanning
+                ? 'popupView__liveBadge--scanning'
+                : ''
+            }`}
+          >
+            <span
+              className={`popupView__liveDot ${
+                !isEnabled
+                  ? 'popupView__liveDot--disabled'
+                  : stats.isScanning
+                  ? 'popupView__liveDot--scanning'
+                  : ''
+              }`}
+            />
+            {!isEnabled ? 'Off' : stats.isScanning ? 'Scanning...' : 'Live'}
+          </div>
+
+          {/* Global On/Off toggle switch */}
+          <label
+            className="popupView__switch"
+            title={isEnabled ? 'Click to disable detection across all pages' : 'Click to enable detection across all pages'}
+          >
+            <input
+              type="checkbox"
+              className="popupView__switchInput"
+              checked={isEnabled}
+              onChange={handleToggleEnabled}
+              aria-label="Toggle detection across all pages"
+            />
+            <span
+              className={`popupView__switchSlider ${
+                isEnabled ? 'popupView__switchSlider--checked' : ''
+              }`}
+            >
+              <span className="popupView__switchThumb" />
+            </span>
+          </label>
         </div>
       </div>
+
+      {/* Disabled Notification Banner */}
+      {!isEnabled && (
+        <div className="popupView__disabledBanner">
+          <span className="popupView__disabledBannerIcon">⏸️</span>
+          <span className="popupView__disabledBannerText">
+            Detection is paused globally across all pages.
+          </span>
+        </div>
+      )}
 
       {/* Metrics Grid */}
       <div className="popupView__metricsGrid">

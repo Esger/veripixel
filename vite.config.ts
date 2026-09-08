@@ -19,6 +19,10 @@ export default defineConfig({
         {
           src: 'src/assets/model_q4.onnx',
           dest: 'assets'
+        },
+        {
+          src: 'src/assets/icons',
+          dest: 'assets'
         }
       ]
     })

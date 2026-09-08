@@ -2,6 +2,7 @@ import {
   injectLoadingBadge,
   injectImageBadge,
   removeBadge,
+  removeAllBadges,
   updateBadgePosition,
   checkPageModalState,
   getActiveModalElements,
@@ -9,6 +10,8 @@ import {
   isDetectorElement
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
+
+let isDetectorEnabled = true;
 
 const MIN_IMAGE_SIZE = 224; // Skip images smaller than 224x224 (AI model sample size)
 
@@ -529,7 +532,7 @@ const scheduleIdleTask =
 
 let modalCheckScheduled = false;
 function scheduleModalStateCheck(): void {
-  if (modalCheckScheduled) return;
+  if (!isDetectorEnabled || modalCheckScheduled) return;
   modalCheckScheduled = true;
   requestAnimationFrame(() => {
     modalCheckScheduled = false;
@@ -539,7 +542,7 @@ function scheduleModalStateCheck(): void {
 
 let scanScheduled = false;
 function scheduleScanDOM(immediate = false): void {
-  if (scanScheduled) return;
+  if (!isDetectorEnabled || scanScheduled) return;
   scanScheduled = true;
   if (immediate) {
     requestAnimationFrame(() => {
@@ -561,9 +564,26 @@ function handleModalStateCheck(): void {
   });
 }
 
-// Initial DOM Scan scheduled on next animation frame
-scheduleScanDOM(true);
-scheduleModalStateCheck();
+// Check persisted extensionEnabled state before running initial DOM scan
+if (isExtensionContextValid()) {
+  try {
+    chrome.storage.local.get('extensionEnabled', (res) => {
+      if (res && res.extensionEnabled === false) {
+        isDetectorEnabled = false;
+      } else {
+        isDetectorEnabled = true;
+        scheduleScanDOM(true);
+        scheduleModalStateCheck();
+      }
+    });
+  } catch {
+    scheduleScanDOM(true);
+    scheduleModalStateCheck();
+  }
+} else {
+  scheduleScanDOM(true);
+  scheduleModalStateCheck();
+}
 
 // Non-blocking MutationObserver that avoids forced synchronous style recalcs
 const mutationObserver = new MutationObserver((mutations) => {
@@ -738,8 +758,21 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Listen for popup jump-to-image requests
+// Listen for global state changes and popup jump-to-image requests
 chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
+  if (message.type === 'GLOBAL_STATE_CHANGED') {
+    isDetectorEnabled = message.enabled;
+    if (!message.enabled) {
+      pendingScanQueue.length = 0;
+      activeScanCount = 0;
+      removeAllBadges(false);
+    } else {
+      scheduleScanDOM(true);
+      scheduleModalStateCheck();
+    }
+    return;
+  }
+
   if (message.type === 'HIGHLIGHT_IMAGE_ON_PAGE') {
     const targetUrl = message.imageUrl;
     const allImages = document.querySelectorAll<HTMLElement>('img, [style*="background"]');

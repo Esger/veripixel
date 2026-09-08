@@ -123,4 +123,7 @@ export type ExtensionMessage =
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
-    };
+    }
+  | { type: 'GLOBAL_STATE_CHANGED'; enabled: boolean }
+  | { type: 'GET_GLOBAL_STATE' }
+  | { type: 'SET_GLOBAL_STATE'; enabled: boolean };

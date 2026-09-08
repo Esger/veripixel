@@ -908,3 +908,11 @@ export function removeBadge(targetEl: HTMLElement, keepProcessedState = false): 
     delete targetEl.dataset.aiDetectorProcessed;
   }
 }
+
+export function removeAllBadges(keepProcessedState = false): void {
+  const elements = Array.from(badgeRegistry.keys());
+  for (const el of elements) {
+    removeBadge(el, keepProcessedState);
+  }
+}
+
