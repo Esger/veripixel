@@ -95,8 +95,8 @@ const Popup: React.FC = () => {
         <div className="popupView__brand">
           <div className="popupView__brandIcon">{isEnabled ? '🛡️' : '⏸️'}</div>
           <div className="popupView__brandText">
-            <h2 className="popupView__title">AI Image Detector</h2>
-            <span className="popupView__subtitle">Client-Side ONNX Engine</span>
+            <h2 className="popupView__title">VeriPixel</h2>
+            <span className="popupView__subtitle">Client-Side Forensics Engine</span>
           </div>
         </div>
 

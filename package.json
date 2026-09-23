@@ -1,7 +1,7 @@
 {
-  "name": "ai-image-detector",
+  "name": "veripixel",
   "version": "0.1.0",
-  "description": "Chrome Extension (Manifest V3) for client-side AI image detection using ONNX Runtime Web and Offscreen Documents",
+  "description": "Chrome Extension (Manifest V3) for client-side image authenticity and manipulation detection using ONNX Runtime Web and Offscreen Documents",
   "type": "module",
   "scripts": {
     "dev": "vite build --watch --mode development",

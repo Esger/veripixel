@@ -151,8 +151,8 @@ const pendingScanQueue: HTMLElement[] = [];
 function enqueueElementForScan(el: HTMLElement): void {
   if (
     !isExtensionContextValid() ||
-    el.dataset.aiDetectorProcessed === 'true' ||
-    el.dataset.aiDetectorProcessed === 'analyzing'
+    el.dataset.veripixelProcessed === 'true' ||
+    el.dataset.veripixelProcessed === 'analyzing'
   ) {
     return;
   }
@@ -170,7 +170,7 @@ function pumpScanQueue(): void {
   // Prune invalid or already processed elements
   for (let i = pendingScanQueue.length - 1; i >= 0; i--) {
     const el = pendingScanQueue[i];
-    if (!document.contains(el) || !isValidTargetElement(el) || el.dataset.aiDetectorProcessed === 'true') {
+    if (!document.contains(el) || !isValidTargetElement(el) || el.dataset.veripixelProcessed === 'true') {
       pendingScanQueue.splice(i, 1);
     }
   }
@@ -208,7 +208,7 @@ function pumpScanQueue(): void {
     const nextEl = pendingScanQueue.shift();
     if (!nextEl) break;
 
-    if (nextEl.dataset.aiDetectorProcessed === 'true' || nextEl.dataset.aiDetectorProcessed === 'analyzing') {
+    if (nextEl.dataset.veripixelProcessed === 'true' || nextEl.dataset.veripixelProcessed === 'analyzing') {
       continue;
     }
 
@@ -235,7 +235,7 @@ function processElement(el: HTMLElement): Promise<void> {
       return;
     }
 
-    if (el.dataset.aiDetectorProcessed === 'true' || el.dataset.aiDetectorProcessed === 'analyzing') {
+    if (el.dataset.veripixelProcessed === 'true' || el.dataset.veripixelProcessed === 'analyzing') {
       resolve();
       return;
     }
@@ -257,7 +257,7 @@ function processElement(el: HTMLElement): Promise<void> {
     }
 
     if (!isValidTargetElement(el)) {
-      if (el.dataset.aiDetectorProcessed) {
+      if (el.dataset.veripixelProcessed) {
         removeBadge(el);
       }
       resolve();
@@ -277,7 +277,7 @@ function processElement(el: HTMLElement): Promise<void> {
       return;
     }
 
-    el.dataset.aiDetectorProcessed = 'analyzing';
+    el.dataset.veripixelProcessed = 'analyzing';
     injectLoadingBadge(el);
     inFlightUrls.add(imageUrl);
 
@@ -290,7 +290,7 @@ function processElement(el: HTMLElement): Promise<void> {
       const dataUrl = await extractImageDataUrl(el);
       if (!dataUrl || !isExtensionContextValid()) {
         inFlightUrls.delete(imageUrl);
-        el.dataset.aiDetectorProcessed = 'failed';
+        el.dataset.veripixelProcessed = 'failed';
         removeBadge(el, true);
         resolve();
         return;
@@ -308,7 +308,7 @@ function processElement(el: HTMLElement): Promise<void> {
           (response) => {
             inFlightUrls.delete(imageUrl);
             if (!isExtensionContextValid() || chrome.runtime.lastError) {
-              el.dataset.aiDetectorProcessed = 'failed';
+              el.dataset.veripixelProcessed = 'failed';
               removeBadge(el, true);
               resolve();
               return;
@@ -316,15 +316,15 @@ function processElement(el: HTMLElement): Promise<void> {
             if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
               if (response.result.status === 'complete') {
                 injectImageBadge(el, response.result);
-                el.dataset.aiDetectorProcessed = 'true';
+                el.dataset.veripixelProcessed = 'true';
               } else if (response.result.status === 'pending') {
-                el.dataset.aiDetectorProcessed = 'pending';
+                el.dataset.veripixelProcessed = 'pending';
               } else {
-                el.dataset.aiDetectorProcessed = 'failed';
+                el.dataset.veripixelProcessed = 'failed';
                 removeBadge(el, true);
               }
             } else {
-              el.dataset.aiDetectorProcessed = 'failed';
+              el.dataset.veripixelProcessed = 'failed';
               removeBadge(el, true);
             }
             resolve();
@@ -332,7 +332,7 @@ function processElement(el: HTMLElement): Promise<void> {
         );
       } catch {
         inFlightUrls.delete(imageUrl);
-        el.dataset.aiDetectorProcessed = 'failed';
+        el.dataset.veripixelProcessed = 'failed';
         removeBadge(el, true);
         resolve();
       }
@@ -363,7 +363,7 @@ function processElement(el: HTMLElement): Promise<void> {
         async (response) => {
           inFlightUrls.delete(imageUrl);
           if (!isExtensionContextValid() || chrome.runtime.lastError) {
-            el.dataset.aiDetectorProcessed = 'failed';
+            el.dataset.veripixelProcessed = 'failed';
             removeBadge(el, true);
             resolve();
             return;
@@ -372,10 +372,10 @@ function processElement(el: HTMLElement): Promise<void> {
           if (response && response.type === 'IMAGE_ANALYSIS_RESULT' && response.result) {
             if (response.result.status === 'complete') {
               injectImageBadge(el, response.result);
-              el.dataset.aiDetectorProcessed = 'true';
+              el.dataset.veripixelProcessed = 'true';
               resolve();
             } else if (response.result.status === 'pending') {
-              el.dataset.aiDetectorProcessed = 'pending';
+              el.dataset.veripixelProcessed = 'pending';
               resolve();
             } else if (response.result.status === 'error') {
               const errStr = String(response.result.error || '');
@@ -386,17 +386,17 @@ function processElement(el: HTMLElement): Promise<void> {
               ) {
                 await sendDataUrlAnalysis();
               } else {
-                el.dataset.aiDetectorProcessed = 'failed';
+                el.dataset.veripixelProcessed = 'failed';
                 removeBadge(el, true);
                 resolve();
               }
             } else {
-              el.dataset.aiDetectorProcessed = 'failed';
+              el.dataset.veripixelProcessed = 'failed';
               removeBadge(el, true);
               resolve();
             }
           } else {
-            el.dataset.aiDetectorProcessed = 'failed';
+            el.dataset.veripixelProcessed = 'failed';
             removeBadge(el, true);
             resolve();
           }
@@ -404,7 +404,7 @@ function processElement(el: HTMLElement): Promise<void> {
       );
     } catch (err) {
       inFlightUrls.delete(imageUrl);
-      el.dataset.aiDetectorProcessed = 'failed';
+      el.dataset.veripixelProcessed = 'failed';
       removeBadge(el, true);
       resolve();
     }
@@ -418,7 +418,7 @@ const observer = new IntersectionObserver(
     if (document.visibilityState === 'hidden') return;
     for (const entry of entries) {
       if (entry.isIntersecting && entry.target instanceof HTMLElement) {
-        if (!entry.target.dataset.aiDetectorProcessed || entry.target.dataset.aiDetectorProcessed === 'pending') {
+        if (!entry.target.dataset.veripixelProcessed || entry.target.dataset.veripixelProcessed === 'pending') {
           enqueueElementForScan(entry.target);
         }
       }
@@ -436,7 +436,7 @@ const resizeObserver = new ResizeObserver((entries) => {
   if (!isExtensionContextValid()) return;
   for (const entry of entries) {
     const target = entry.target as HTMLElement;
-    if (!target.dataset.aiDetectorProcessed || target.dataset.aiDetectorProcessed === 'pending') {
+    if (!target.dataset.veripixelProcessed || target.dataset.veripixelProcessed === 'pending') {
       if (isValidTargetElement(target)) {
         const inViewport = isElementInViewport(target);
         const activeModals = getActiveModalElements();
@@ -457,7 +457,7 @@ const resizeObserver = new ResizeObserver((entries) => {
 
 function observeElement(el: HTMLElement, immediateCheck = false): void {
   if (!isValidTargetElement(el)) {
-    if (el.dataset.aiDetectorProcessed) {
+    if (el.dataset.veripixelProcessed) {
       removeBadge(el);
     }
     return;
@@ -466,7 +466,7 @@ function observeElement(el: HTMLElement, immediateCheck = false): void {
   observer.observe(el);
   resizeObserver.observe(el);
 
-  if (immediateCheck && (!el.dataset.aiDetectorProcessed || el.dataset.aiDetectorProcessed === 'pending')) {
+  if (immediateCheck && (!el.dataset.veripixelProcessed || el.dataset.veripixelProcessed === 'pending')) {
     enqueueElementForScan(el);
   }
 }
@@ -615,7 +615,7 @@ const mutationObserver = new MutationObserver((mutations) => {
 
       mutation.removedNodes.forEach((node) => {
         if (node instanceof HTMLElement) {
-          if (node.dataset?.aiDetectorProcessed) {
+          if (node.dataset?.veripixelProcessed) {
             removeBadge(node);
           }
           scheduleModalStateCheck();
@@ -633,7 +633,7 @@ const mutationObserver = new MutationObserver((mutations) => {
         mutation.attributeName === 'data-src'
       ) {
         if (target instanceof HTMLImageElement) {
-          delete target.dataset.aiDetectorProcessed;
+          delete target.dataset.veripixelProcessed;
           if (isValidTargetElement(target)) {
             observeElement(target, isElementInViewport(target));
           }
