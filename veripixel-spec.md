@@ -1,4 +1,4 @@
-# Technische specificatie: AI-Image Detector Browser Extension
+# Technische specificatie: VeriPixel Browser Extension
 
 ## 1. Doel
 

@@ -20,7 +20,7 @@ ort.env.logLevel = 'error';
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
 
-const DB_NAME = 'AI_DETECTOR_DB';
+const DB_NAME = 'VERIPIXEL_DB';
 const DB_VERSION = 2;
 const STORE_NAME = 'models';
 const MODEL_KEY = 'smogy_swin_q4_v1';

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "AI Image Detector",
+  "name": "VeriPixel: Image Authenticity & AI Detector",
+  "short_name": "VeriPixel",
   "version": "0.1.0",
-  "description": "Client-side AI image detection for web browsing using ONNX Runtime Web in an Offscreen Document.",
+  "description": "Client-side image authenticity and manipulation detection for web browsing using ONNX Runtime Web in an Offscreen Document.",
   "permissions": [
     "activeTab",
     "scripting",
