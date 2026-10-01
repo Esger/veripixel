@@ -99,7 +99,7 @@ All image decoding, feature extraction, and neural network inference occur local
 ## Privacy Policy
 
 **Privacy Policy URL** [REQUIRED — due to host permissions]
-`https://ashware.nl/veriPixel`
+`https://ashware.nl/veripixel-privacy/`
 *(Alternative / GitHub mirror: `https://github.com/Esger/veripixel/blob/main/PRIVACY.md`)*
 
 ---
