@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite build --watch --mode development",
     "build": "tsc && vite build",
+    "package": "bash scripts/package-extension.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
