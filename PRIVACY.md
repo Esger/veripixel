@@ -45,5 +45,5 @@ If we ever update this Privacy Policy, the revised version will be published her
 
 If you have questions or concerns about this privacy policy, please contact us at:
 - **Website:** https://ashware.nl/veriPixel
-- **Email:** contact@veripixel.app
+- **Email:** esgerj+veripixel@gmail.com
 - **Repository:** https://github.com/Esger/veripixel
