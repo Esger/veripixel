@@ -1,0 +1,187 @@
+:root {
+  --bg-color: #f8fafc;
+  --card-bg: #ffffff;
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --border-color: #e2e8f0;
+  --link-color: #2563eb;
+  --link-hover: #1d4ed8;
+  --code-bg: #f1f5f9;
+  --code-border: #cbd5e1;
+  --badge-bg: #eff6ff;
+  --badge-border: #bfdbfe;
+  --badge-text: #1d4ed8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #0b0f19;
+    --card-bg: #111827;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --border-color: #1e293b;
+    --link-color: #60a5fa;
+    --link-hover: #93c5fd;
+    --code-bg: #1e293b;
+    --code-border: #334155;
+    --badge-bg: #1e293b;
+    --badge-border: #3b82f6;
+    --badge-text: #93c5fd;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  line-height: 1.65;
+  padding: 40px 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.privacy-container {
+  max-width: 780px;
+  margin: 0 auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 48px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+}
+
+.privacy-policy h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin-bottom: 8px;
+  color: var(--text-main);
+}
+
+.last-updated {
+  font-size: 0.925rem;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.intro-text {
+  font-size: 1.05rem;
+  margin-bottom: 28px;
+  color: var(--text-muted);
+}
+
+.privacy-policy h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-top: 36px;
+  margin-bottom: 12px;
+  color: var(--text-main);
+}
+
+.privacy-policy p {
+  margin-bottom: 16px;
+  color: var(--text-muted);
+}
+
+.privacy-policy p strong {
+  color: var(--text-main);
+}
+
+.privacy-policy hr {
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  margin: 32px 0;
+}
+
+.privacy-policy ul {
+  list-style: disc;
+  padding-left: 24px;
+  margin-bottom: 20px;
+}
+
+.privacy-policy li {
+  margin-bottom: 10px;
+  color: var(--text-muted);
+}
+
+.privacy-policy li strong {
+  color: var(--text-main);
+}
+
+.summary-card {
+  background-color: var(--badge-bg);
+  border: 1px solid var(--badge-border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin: 20px 0 28px 0;
+}
+
+.summary-card h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 1.15rem;
+  color: var(--badge-text);
+}
+
+.summary-card ul {
+  margin-bottom: 0;
+}
+
+.summary-card li {
+  color: var(--text-main);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.88em;
+  background-color: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--text-main);
+}
+
+a {
+  color: var(--link-color);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+
+a:hover {
+  color: var(--link-hover);
+}
+
+footer {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 20px 12px;
+  }
+
+  .privacy-container {
+    padding: 24px 20px;
+    border-radius: 8px;
+  }
+
+  .privacy-policy h1 {
+    font-size: 1.6rem;
+  }
+
+  .privacy-policy h2 {
+    font-size: 1.15rem;
+  }
+}

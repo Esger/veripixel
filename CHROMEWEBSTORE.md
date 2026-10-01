@@ -118,7 +118,7 @@ All image decoding, feature extraction, and neural network inference occur local
 VeriPixel
 
 **Contact Email** [REQUIRED]
-contact@veripixel.app
+esgerj+veripixel@gmail.com
 
 ---
 

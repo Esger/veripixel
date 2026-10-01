@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Privacy Policy for VeriPixel: Image Authenticity & AI Detector. 100% on-device AI forensics with zero user tracking or data collection.">
+  <title>Privacy Policy — VeriPixel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="privacy-container">
+    <article class="privacy-policy">
+      <h1>Privacy Policy for VeriPixel</h1>
+      <p class="last-updated"><strong>Last updated:</strong> October 2, 2026</p>
+
+      <p class="intro-text">VeriPixel ("we", "our", or "the extension") is committed to protecting your privacy. This privacy policy explains how VeriPixel handles user data.</p>
+
+      <div class="summary-card">
+        <h2>Summary</h2>
+        <ul>
+          <li><strong>Zero Data Collection:</strong> VeriPixel does not collect, record, track, or sell any personal data, browsing history, or analyzed media.</li>
+          <li><strong>100% On-Device Processing:</strong> All image analysis and artificial intelligence inference occur entirely on your local device using client-side WebAssembly (ONNX Runtime Web).</li>
+          <li><strong>No Remote Telemetry or Tracking:</strong> No image pixels, URLs, metadata, or analytics are ever transmitted to any external server.</li>
+        </ul>
+      </div>
+
+      <hr />
+
+      <h2>1. Information We Do Not Collect</h2>
+      <p>When using VeriPixel:</p>
+      <ul>
+        <li>We <strong>do not</strong> collect your name, email address, IP address, or device identifiers.</li>
+        <li>We <strong>do not</strong> collect or monitor your browsing history or visited URLs.</li>
+        <li>We <strong>do not</strong> upload or store copies of web images you view or inspect.</li>
+        <li>We <strong>do not</strong> use cookies, analytics libraries, or third-party trackers.</li>
+      </ul>
+
+      <h2>2. Permissions and How They Are Used</h2>
+      <p>VeriPixel requests the following minimal browser permissions strictly to perform its local functionality:</p>
+      <ul>
+        <li><strong><code>&lt;all_urls&gt;</code> (Host Permissions):</strong> Allows the extension's content script to detect visible <code>&lt;img&gt;</code> tags on web pages you browse, enabling the display of real-time authenticity badges and inspection overlays. No webpage content is copied or exfiltrated.</li>
+        <li><strong><code>activeTab</code>:</strong> Enables on-demand forensic inspection and badge interaction when you interact with an image or the extension on the active tab.</li>
+        <li><strong><code>storage</code>:</strong> Used exclusively to store your personal extension preferences (such as enabling/disabling automatic scanning) locally inside your browser via <code>chrome.storage.local</code>.</li>
+        <li><strong><code>offscreen</code>:</strong> Used to run neural network inference and canvas image rendering inside an isolated offscreen document via WebAssembly SIMD without freezing browser tabs.</li>
+      </ul>
+
+      <h2>3. Data Storage and Retention</h2>
+      <p>All preferences and temporary forensic cache entries are stored strictly in your browser's local sandbox (<code>chrome.storage.local</code> and <code>chrome.storage.session</code>). This data never leaves your computer and is purged automatically when tabs/browser sessions are closed or when the extension is uninstalled.</p>
+
+      <h2>4. Third-Party Services</h2>
+      <p>VeriPixel does not integrate with any third-party analytics, advertising, or external cloud API services.</p>
+
+      <h2>5. Changes to This Policy</h2>
+      <p>If we ever update this Privacy Policy, the revised version will be published here with an updated "Last updated" date.</p>
+
+      <h2>6. Contact</h2>
+      <p>If you have questions or concerns about this privacy policy, please contact us at:</p>
+      <ul>
+        <li><strong>Website:</strong> <a href="https://ashware.nl/veriPixel" target="_blank" rel="noopener">https://ashware.nl/veriPixel</a></li>
+        <li><strong>Email:</strong> <a href="mailto:esgerj+veripixel@gmail.com">esgerj+veripixel@gmail.com</a></li>
+        <li><strong>Repository:</strong> <a href="https://github.com/Esger/veripixel" target="_blank" rel="noopener">https://github.com/Esger/veripixel</a></li>
+      </ul>
+    </article>
+
+    <footer>
+      <p>&copy; 2026 VeriPixel. All rights reserved.</p>
+    </footer>
+  </main>
+</body>
+</html>
