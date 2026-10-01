@@ -3,10 +3,9 @@
   "name": "VeriPixel: Image Authenticity & AI Detector",
   "short_name": "VeriPixel",
   "version": "0.1.0",
-  "description": "Client-side image authenticity and manipulation detection for web browsing using ONNX Runtime Web in an Offscreen Document.",
+  "description": "Detects AI-generated and manipulated images on any webpage with real-time badges, patch forensics, and 100% on-device privacy.",
   "permissions": [
     "activeTab",
-    "scripting",
     "storage",
     "offscreen"
   ],
