@@ -1,7 +1,8 @@
 import exifr from 'exifr';
-import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
+import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning, MediaType } from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runBatchedPatchInference } from './model-runner';
+import { detectMediaType } from './media-detector';
 import { logger } from './logger';
 // Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
 // so that Chrome's extension manager does not collect them as extension errors.
@@ -176,7 +177,16 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
 
     // Check for C2PA or software signatures
     const softwareStr = (exifData?.Software || '').toLowerCase();
-    const c2paPresent = softwareStr.includes('c2pa') || softwareStr.includes('firefly');
+    const isAiSoftware =
+      softwareStr.includes('firefly') ||
+      softwareStr.includes('midjourney') ||
+      softwareStr.includes('stable diffusion') ||
+      softwareStr.includes('dall-e') ||
+      softwareStr.includes('comfyui') ||
+      softwareStr.includes('novelai');
+
+    const aiSoftwareName = isAiSoftware ? exifData?.Software : undefined;
+    const c2paPresent = softwareStr.includes('c2pa') || isAiSoftware;
 
     let qualityScore = 1.0;
     if (!exifPresent) qualityScore -= 0.3;
@@ -186,6 +196,8 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
       exifPresent,
       cameraModel,
       c2paPresent,
+      aiProvenancePresent: isAiSoftware,
+      aiSoftwareName,
       estimatedCompressionGenerations: exifPresent ? 1 : 2,
       qualityScore: Math.max(0, qualityScore)
     };
@@ -199,17 +211,19 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
 }
 
 /**
- * Synthesizes multi-patch scores and forensic metadata into actionable natural language reasoning.
+ * Synthesizes multi-patch scores, detected media type, and forensic metadata into actionable natural language reasoning.
  */
 function generateForensicReasoning(
   patchScores: PatchResult[],
-  metadata: MetadataResult
+  metadata: MetadataResult,
+  mediaType: MediaType = 'general-media'
 ): ForensicReasoning {
   if (patchScores.length === 0) {
     return {
       type: 'ambiguous',
       title: 'Insufficient Data',
-      description: 'Image dimensions too small for multi-patch forensic analysis.'
+      description: 'Image dimensions too small for multi-patch forensic analysis.',
+      mediaType
     };
   }
 
@@ -220,52 +234,150 @@ function generateForensicReasoning(
   const spread = maxScore - minScore;
   const highCount = scores.filter((s) => s >= 0.7).length;
 
-  // 1. C2PA Verified
+  // 1. Provenance Verification
+  if (metadata.aiProvenancePresent) {
+    return {
+      type: 'full-synthetic',
+      title: 'C2PA Verified: Generative AI',
+      description: `Cryptographic provenance metadata confirms image was created using AI software (${metadata.aiSoftwareName || 'Generative AI'}).`,
+      mediaType
+    };
+  }
+
   if (metadata.c2paPresent) {
     return {
       type: 'likely-real',
       title: 'C2PA Credentials Verified',
-      description: 'Contains valid cryptographic provenance metadata.'
+      description: 'Contains valid cryptographic provenance metadata confirming authentic origin.',
+      mediaType
     };
   }
 
-  // 2. High variance between regions (e.g. face-swap, inpainting, or composite)
+  // 2. High variance between regions (inpainting, composite, or localized generation)
   if (patchScores.length > 1 && spread >= 0.40 && maxScore >= 0.70) {
     const topPatch = patchScores.find((p) => p.aiScore === maxScore);
     const lowPatch = patchScores.find((p) => p.aiScore === minScore);
     const topLabel = topPatch?.position || 'one sample';
     const lowLabel = lowPatch?.position || 'another sample';
+    const scoreDiff = `${Math.round(maxScore * 100)}% in ${topLabel} vs ${Math.round(minScore * 100)}% in ${lowLabel}`;
+
+    let divergenceDesc = `High divergence across regions (${scoreDiff}). `;
+    if (mediaType === 'digital-art') {
+      divergenceDesc += 'Indicator of localized generative inpainting, AI touch-ups, or composite artwork.';
+    } else if (mediaType === 'screen-capture') {
+      divergenceDesc += 'Indicator of localized AI inpainting, digital editing, or contrast between rendered elements and interface text.';
+    } else if (mediaType === 'camera-photo') {
+      divergenceDesc += 'Strong indicator of inpainting, composite, or face-swap.';
+    } else {
+      divergenceDesc += 'Strong indicator of localized AI inpainting, generative fill, or composite edit.';
+    }
+
     return {
       type: 'localized-edit',
       title: 'Localized AI Alteration Detected',
-      description: `High divergence across regions (${Math.round(maxScore * 100)}% in ${topLabel} vs ${Math.round(minScore * 100)}% in ${lowLabel}). Strong indicator of inpainting, composite, or face-swap.`
+      description: divergenceDesc,
+      mediaType
     };
   }
 
-  // 3. Uniformly High AI Probability across all crops
+  // 3. Uniformly High AI Probability across sampled crops
   if (highCount === patchScores.length || (avgScore >= 0.75 && minScore >= 0.50)) {
+    if (mediaType === 'digital-art') {
+      return {
+        type: 'full-synthetic',
+        title: 'AI-Generated Synthetic Artwork',
+        description: 'Consistent generative AI patterns and synthetic textures detected across all sampled regions (likely Midjourney / Niji, NovelAI, or Stable Diffusion).',
+        mediaType
+      };
+    }
+
+    if (mediaType === 'screen-capture') {
+      return {
+        type: 'full-synthetic',
+        title: 'AI-Generated Synthetic Media',
+        description: 'Consistent generative AI diffusion patterns detected across all sampled regions.',
+        mediaType
+      };
+    }
+
     return {
       type: 'full-synthetic',
       title: 'Uniform Synthetic Artifacts',
-      description: 'Consistent diffusion textures and frequency anomalies detected across all sampled regions (likely Midjourney, SDXL, or Flux).'
+      description: 'Consistent diffusion textures and frequency anomalies detected across all sampled regions (likely Midjourney, SDXL, or Flux).',
+      mediaType
     };
   }
 
-  // 4. Uniformly Low AI Probability (Authentic camera photo)
+  // 4. Uniformly Low AI Probability (Authentic non-AI media)
   if (maxScore < 0.30) {
-    const camInfo = metadata.cameraModel ? ` (${metadata.cameraModel})` : '';
+    if (mediaType === 'digital-art') {
+      return {
+        type: 'likely-real',
+        title: 'Authentic Digital Artwork',
+        description: 'No generative AI synthesis artifacts detected across sampled regions. Consistent with human-drawn illustration, digital painting, or graphic design.',
+        mediaType
+      };
+    }
+
+    if (mediaType === 'screen-capture') {
+      return {
+        type: 'likely-real',
+        title: 'Authentic Screen Capture',
+        description: 'No generative AI diffusion artifacts detected across sampled regions. Consistent with an authentic screen capture or digital interface.',
+        mediaType
+      };
+    }
+
+    if (mediaType === 'graphic-or-ui') {
+      return {
+        type: 'likely-real',
+        title: 'Authentic Graphic / UI Media',
+        description: 'No generative AI patterns detected. Consistent with vector artwork, application UI capture, or digital graphic design.',
+        mediaType
+      };
+    }
+
+    if (mediaType === 'camera-photo') {
+      const camInfo = metadata.cameraModel ? ` (${metadata.cameraModel})` : '';
+      return {
+        type: 'likely-real',
+        title: metadata.cameraModel ? 'Authentic Camera Photograph' : 'Authentic Photographic Capture',
+        description: metadata.cameraModel
+          ? `Natural optical capture characteristics and camera hardware metadata verified${camInfo}.`
+          : 'No generative AI diffusion patterns detected across sampled regions. Consistent with an authentic camera photograph.',
+        mediaType
+      };
+    }
+
     return {
       type: 'likely-real',
-      title: 'Authentic Photographic Texture',
-      description: `Natural ISO sensor noise and optical lens characteristics verified across all regions${camInfo}.`
+      title: 'Authentic Non-AI Content',
+      description: 'No generative AI diffusion patterns or synthetic anomalies detected across sampled regions.',
+      mediaType
     };
   }
 
   // 5. Mixed / Subtle / Filtered
+  const avgPct = Math.round(avgScore * 100);
+  let ambiguousDesc = `Average AI confidence of ${avgPct}%. `;
+
+  if (mediaType === 'screen-capture') {
+    ambiguousDesc += 'Inconclusive signals; likely caused by display rendering, antialiasing, or compression artifacts.';
+  } else if (mediaType === 'digital-art') {
+    ambiguousDesc += 'Inconclusive signals; likely caused by digital painting textures, stylized gradients, or compression artifacts.';
+  } else if (mediaType === 'graphic-or-ui') {
+    ambiguousDesc += 'Inconclusive signals; likely caused by rasterization filters or image compression.';
+  } else if (mediaType === 'camera-photo') {
+    ambiguousDesc += 'Moderate signals; may be a heavily processed, beauty-filtered, or upscaled photo.';
+  } else {
+    ambiguousDesc += 'Inconclusive signals; may be post-processed graphics, stylized digital art, upscaled media, or filtered photography.';
+  }
+
   return {
     type: 'ambiguous',
     title: 'Subtle / Mixed Forensic Signals',
-    description: `Average AI confidence of ${Math.round(avgScore * 100)}%. May be a heavily processed, beauty-filtered, or upscaled photo.`
+    description: ambiguousDesc,
+    mediaType
   };
 }
 
@@ -302,7 +414,18 @@ async function processImageBlob(
     };
   }
 
-  // 3. Serialized ONNX model inference inside priority concurrency queue
+  // 3. Classify visual media type (camera photo, digital artwork, game screenshot, graphic UI)
+  const mediaType = detectMediaType(extraction.width, extraction.height, metadata, extraction.patches);
+
+  // Adjust quality score for non-camera digital media (lack of camera EXIF is expected, not a quality defect)
+  if (
+    (mediaType === 'digital-art' || mediaType === 'screen-capture' || mediaType === 'graphic-or-ui') &&
+    !metadata.cameraModel
+  ) {
+    metadata.qualityScore = Math.min(1.0, metadata.qualityScore + 0.3);
+  }
+
+  // 4. Serialized ONNX model inference inside priority concurrency queue
   return queue.run(
     async () => {
       const patchCanvases = extraction.patches.map((p) => p.canvas);
@@ -320,12 +443,14 @@ async function processImageBlob(
       const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
 
       let baseScore = maxPatchScore * 0.6 + avgPatchScore * 0.4;
-      if (metadata.c2paPresent) {
+      if (metadata.aiProvenancePresent) {
+        baseScore = 0.99;
+      } else if (metadata.c2paPresent) {
         baseScore = Math.max(0.01, baseScore - 0.3);
       }
 
       const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
-      const reasoning = generateForensicReasoning(patchScores, metadata);
+      const reasoning = generateForensicReasoning(patchScores, metadata, mediaType);
 
       return {
         imageUrl,
@@ -335,6 +460,7 @@ async function processImageBlob(
         metadata,
         timestamp: Date.now(),
         reasoning,
+        mediaType,
         supportsDeepSampling: extraction.supportsDeepSampling,
         deepGrid: extraction.deepGrid,
         currentGrid: extraction.currentGrid,

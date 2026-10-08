@@ -20,6 +20,8 @@ export interface MetadataResult {
   exifPresent: boolean;
   cameraModel?: string;
   c2paPresent: boolean;
+  aiProvenancePresent?: boolean;
+  aiSoftwareName?: string;
   estimatedCompressionGenerations?: number;
   qualityScore: number;
 }
@@ -30,10 +32,13 @@ export interface GridDimensions {
   total: number;
 }
 
+export type MediaType = 'camera-photo' | 'digital-art' | 'screen-capture' | 'graphic-or-ui' | 'general-media';
+
 export interface ForensicReasoning {
   type: 'full-synthetic' | 'localized-edit' | 'likely-real' | 'ambiguous';
   title: string;
   description: string;
+  mediaType?: MediaType;
 }
 
 export interface AnalysisResult {
@@ -44,6 +49,7 @@ export interface AnalysisResult {
   metadata: MetadataResult;
   timestamp: number;
   reasoning?: ForensicReasoning;
+  mediaType?: MediaType;
   supportsDeepSampling?: boolean;
   deepGrid?: GridDimensions;
   currentGrid?: GridDimensions;
@@ -61,6 +67,7 @@ export interface ImageSummary {
   cameraModel?: string;
   c2paPresent?: boolean;
   reasoningTitle?: string;
+  mediaType?: MediaType;
 }
 
 export interface TabScanStats {

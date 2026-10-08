@@ -688,7 +688,8 @@ function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void
     timestamp: result.timestamp,
     cameraModel: result.metadata.cameraModel,
     c2paPresent: result.metadata.c2paPresent,
-    reasoningTitle: result.reasoning?.title
+    reasoningTitle: result.reasoning?.title,
+    mediaType: result.mediaType || result.reasoning?.mediaType
   };
 
   const existingIdx = stats.images.findIndex((img) => img.imageUrl === displayUrl && displayUrl !== '');

@@ -279,17 +279,20 @@
   box-sizing: border-box;
 }
 
-.detectorTooltip__assessment--localized {
+.detectorTooltip__assessment--localized,
+.detectorTooltip__assessment--localized-edit {
   border-left-color: #A855F7;
   background: rgba(168, 85, 247, 0.12);
 }
 
-.detectorTooltip__assessment--synthetic {
+.detectorTooltip__assessment--synthetic,
+.detectorTooltip__assessment--full-synthetic {
   border-left-color: #EF4444;
   background: rgba(239, 68, 68, 0.12);
 }
 
-.detectorTooltip__assessment--real {
+.detectorTooltip__assessment--real,
+.detectorTooltip__assessment--likely-real {
   border-left-color: #10B981;
   background: rgba(16, 185, 129, 0.12);
 }
