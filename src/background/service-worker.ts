@@ -4,21 +4,22 @@ import { logger } from './logger';
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
 
 // Cache for results in session storage using SHA-256 hash keys to prevent quota exhaustion from data URLs
-async function getCacheKey(url: string): Promise<string> {
-  if (url.length > 128 || url.startsWith('data:')) {
-    const data = new TextEncoder().encode(url);
+async function getCacheKey(url: string, sampleMode?: string): Promise<string> {
+  const full = sampleMode ? `${url}::${sampleMode}` : url;
+  if (full.length > 128 || full.startsWith('data:')) {
+    const data = new TextEncoder().encode(full);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashHex = Array.from(new Uint8Array(hashBuffer))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
     return `img_${hashHex}`;
   }
-  return `img_${url}`;
+  return `img_${full}`;
 }
 
-async function getCachedResult(url: string): Promise<AnalysisResult | null> {
+async function getCachedResult(url: string, sampleMode?: string): Promise<AnalysisResult | null> {
   try {
-    const key = await getCacheKey(url);
+    const key = await getCacheKey(url, sampleMode);
     const data = await chrome.storage.session.get(key);
     return (data[key] as AnalysisResult) || null;
   } catch (e) {
@@ -29,8 +30,13 @@ async function getCachedResult(url: string): Promise<AnalysisResult | null> {
 
 async function setCachedResult(url: string, result: AnalysisResult): Promise<void> {
   try {
-    const key = await getCacheKey(url);
-    await chrome.storage.session.set({ [key]: result });
+    const defaultKey = await getCacheKey(url);
+    const toStore: Record<string, AnalysisResult> = { [defaultKey]: result };
+    if (result.sampleMode) {
+      const modeKey = await getCacheKey(url, result.sampleMode);
+      toStore[modeKey] = result;
+    }
+    await chrome.storage.session.set(toStore);
   } catch (e) {
     logger.warn('[Background] Failed to set cached result:', e);
   }
@@ -423,26 +429,32 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
         // Check cache first (unless forceRescan is requested or sampleMode differs)
         if (!forceRescan) {
-          const cached = await getCachedResult(imageUrl);
-          if (cached) {
-            const isCacheCompatible =
-              cached.sampleMode === requestedSampleMode ||
-              (!cached.sampleMode && requestedSampleMode === 'standard') ||
-              (requestedSampleMode === 'fast' && (cached.sampleMode === 'standard' || cached.sampleMode === 'deep'));
-
-            if (isCacheCompatible) {
-              if (tabId !== undefined) {
-                const stillScanning = finishInFlightScan(tabId);
-                const stats = await getOrCreateTabStats(tabId);
-                stats.isScanning = stillScanning;
-                recordTabImageResult(stats, cached);
-                await saveTabStats(stats);
-                updateTabToolbarBadge(tabId, stats);
-                broadcastTabStatsUpdate(stats);
+          let cached = await getCachedResult(imageUrl, requestedSampleMode);
+          if (!cached) {
+            const latestCached = await getCachedResult(imageUrl);
+            if (latestCached) {
+              const isCacheCompatible =
+                latestCached.sampleMode === requestedSampleMode ||
+                (!latestCached.sampleMode && requestedSampleMode === 'standard') ||
+                (requestedSampleMode === 'fast' && (latestCached.sampleMode === 'standard' || latestCached.sampleMode === 'deep'));
+              if (isCacheCompatible) {
+                cached = latestCached;
               }
-              sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
-              return;
             }
+          }
+
+          if (cached) {
+            if (tabId !== undefined) {
+              const stillScanning = finishInFlightScan(tabId);
+              const stats = await getOrCreateTabStats(tabId);
+              stats.isScanning = stillScanning;
+              recordTabImageResult(stats, cached);
+              await saveTabStats(stats);
+              updateTabToolbarBadge(tabId, stats);
+              broadcastTabStatsUpdate(stats);
+            }
+            sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
+            return;
           }
         }
 

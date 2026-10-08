@@ -9,6 +9,8 @@ interface BadgeEntry {
   regionEls: HTMLElement[];
   patches?: PatchResult[];
   result?: AnalysisResult;
+  standardResult?: AnalysisResult;
+  deepResult?: AnalysisResult;
   isDeepening?: boolean;
 }
 
@@ -625,6 +627,11 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   const { badgeEl, tooltipEl } = entry;
   entry.patches = result.patchScores;
   entry.result = result;
+  if (result.sampleMode === 'standard') {
+    entry.standardResult = result;
+  } else if (result.sampleMode === 'deep') {
+    entry.deepResult = result;
+  }
 
   const activeModals = getActiveModalElements();
   const isModalActive = activeModals.length > 0 || isPageInModalState();
@@ -943,6 +950,35 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       e.stopPropagation();
 
       const nextMode: 'standard' | 'deep' = isDeepActive ? 'standard' : 'deep';
+      const existingEntry = badgeRegistry.get(targetEl);
+      const cachedResult = nextMode === 'deep' ? existingEntry?.deepResult : existingEntry?.standardResult;
+
+      if (cachedResult) {
+        // Instant switch if calculation has already been done before
+        const wasTooltipOpen = tooltipEl.matches && tooltipEl.matches(':popover-open');
+        injectImageBadge(targetEl, cachedResult);
+        if (wasTooltipOpen) {
+          const currentEntry = badgeRegistry.get(targetEl);
+          if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
+          try {
+            currentEntry?.tooltipEl.hidePopover();
+            currentEntry?.tooltipEl.showPopover();
+          } catch (e) {}
+        }
+
+        // Keep background service worker session & toolbar badge synced
+        try {
+          chrome.runtime.sendMessage({
+            type: 'ANALYZE_IMAGE',
+            imageUrl: cachedResult.imageUrl,
+            sampleMode: nextMode,
+            forceRescan: false,
+            priority: 'high'
+          });
+        } catch (e) {}
+        return;
+      }
+
       toggleBtn.disabled = true;
       toggleBtn.classList.add('detectorTooltip__sampleToggleBtn--loading');
       toggleBtn.textContent =
@@ -964,7 +1000,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
             imageUrl: result.imageUrl,
             dataUrl,
             sampleMode: nextMode,
-            forceRescan: true,
+            forceRescan: false,
             priority: 'high'
           },
           (response) => {
@@ -985,7 +1021,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
               injectImageBadge(targetEl, response.result);
               if (wasTooltipOpen) {
                 const currentEntry = badgeRegistry.get(targetEl);
-                if (currentEntry) showRegionsForEntry(currentEntry);
+                if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
                 try {
                   tooltipEl.hidePopover();
                   tooltipEl.showPopover();
