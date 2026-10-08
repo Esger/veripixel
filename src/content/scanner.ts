@@ -7,11 +7,13 @@ import {
   checkPageModalState,
   getActiveModalElements,
   isElementInsideActiveModal,
-  isDetectorElement
+  isDetectorElement,
+  setOverlayEnabled
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
-let isDetectorEnabled = true;
+let isDetectorEnabled = false;
+let isInitialized = false;
 
 const MIN_IMAGE_SIZE = 224; // Skip images smaller than 224x224 (AI model sample size)
 
@@ -150,6 +152,7 @@ const pendingScanQueue: HTMLElement[] = [];
 
 function enqueueElementForScan(el: HTMLElement): void {
   if (
+    !isDetectorEnabled ||
     !isExtensionContextValid() ||
     el.dataset.veripixelProcessed === 'true' ||
     el.dataset.veripixelProcessed === 'analyzing'
@@ -167,6 +170,11 @@ function enqueueElementForScan(el: HTMLElement): void {
 }
 
 function pumpScanQueue(): void {
+  if (!isDetectorEnabled) {
+    pendingScanQueue.length = 0;
+    activeScanCount = 0;
+    return;
+  }
   if (!isExtensionContextValid() || document.visibilityState === 'hidden') {
     return;
   }
@@ -228,7 +236,7 @@ function pumpScanQueue(): void {
 
 function processElement(el: HTMLElement): Promise<void> {
   return new Promise<void>((resolve) => {
-    if (!isExtensionContextValid()) {
+    if (!isDetectorEnabled || !isExtensionContextValid()) {
       resolve();
       return;
     }
@@ -291,11 +299,17 @@ function processElement(el: HTMLElement): Promise<void> {
     const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
 
     const sendDataUrlAnalysis = async () => {
+      if (!isDetectorEnabled) {
+        inFlightUrls.delete(imageUrl);
+        removeBadge(el, false);
+        resolve();
+        return;
+      }
       const dataUrl = await extractImageDataUrl(el);
-      if (!dataUrl || !isExtensionContextValid()) {
+      if (!dataUrl || !isExtensionContextValid() || !isDetectorEnabled) {
         inFlightUrls.delete(imageUrl);
         el.dataset.veripixelProcessed = 'failed';
-        removeBadge(el, true);
+        removeBadge(el, isDetectorEnabled);
         resolve();
         return;
       }
@@ -312,6 +326,11 @@ function processElement(el: HTMLElement): Promise<void> {
           } as ExtensionMessage,
           (response) => {
             inFlightUrls.delete(imageUrl);
+            if (!isDetectorEnabled) {
+              removeBadge(el, false);
+              resolve();
+              return;
+            }
             if (!isExtensionContextValid() || chrome.runtime.lastError) {
               el.dataset.veripixelProcessed = 'failed';
               removeBadge(el, true);
@@ -338,7 +357,7 @@ function processElement(el: HTMLElement): Promise<void> {
       } catch {
         inFlightUrls.delete(imageUrl);
         el.dataset.veripixelProcessed = 'failed';
-        removeBadge(el, true);
+        removeBadge(el, isDetectorEnabled);
         resolve();
       }
     };
@@ -350,9 +369,9 @@ function processElement(el: HTMLElement): Promise<void> {
     }
 
     try {
-      if (!isExtensionContextValid()) {
+      if (!isExtensionContextValid() || !isDetectorEnabled) {
         inFlightUrls.delete(imageUrl);
-        removeBadge(el, true);
+        removeBadge(el, isDetectorEnabled);
         resolve();
         return;
       }
@@ -367,6 +386,11 @@ function processElement(el: HTMLElement): Promise<void> {
         } as ExtensionMessage,
         async (response) => {
           inFlightUrls.delete(imageUrl);
+          if (!isDetectorEnabled) {
+            removeBadge(el, false);
+            resolve();
+            return;
+          }
           if (!isExtensionContextValid() || chrome.runtime.lastError) {
             el.dataset.veripixelProcessed = 'failed';
             removeBadge(el, true);
@@ -385,6 +409,8 @@ function processElement(el: HTMLElement): Promise<void> {
             } else if (response.result.status === 'error') {
               const errStr = String(response.result.error || '');
               if (
+                isDetectorEnabled &&
+                !errStr.includes('disabled') &&
                 !errStr.includes('timed out') &&
                 !errStr.includes('cancelled') &&
                 !errStr.includes('queue')
@@ -392,17 +418,17 @@ function processElement(el: HTMLElement): Promise<void> {
                 await sendDataUrlAnalysis();
               } else {
                 el.dataset.veripixelProcessed = 'failed';
-                removeBadge(el, true);
+                removeBadge(el, isDetectorEnabled);
                 resolve();
               }
             } else {
               el.dataset.veripixelProcessed = 'failed';
-              removeBadge(el, true);
+              removeBadge(el, isDetectorEnabled);
               resolve();
             }
           } else {
             el.dataset.veripixelProcessed = 'failed';
-            removeBadge(el, true);
+            removeBadge(el, isDetectorEnabled);
             resolve();
           }
         }
@@ -410,7 +436,7 @@ function processElement(el: HTMLElement): Promise<void> {
     } catch (err) {
       inFlightUrls.delete(imageUrl);
       el.dataset.veripixelProcessed = 'failed';
-      removeBadge(el, true);
+      removeBadge(el, isDetectorEnabled);
       resolve();
     }
   });
@@ -419,7 +445,7 @@ function processElement(el: HTMLElement): Promise<void> {
 // Intersection Observer for lazy scanning (50px tight margin so only genuinely visible images scan)
 const observer = new IntersectionObserver(
   (entries) => {
-    if (!isExtensionContextValid()) return;
+    if (!isDetectorEnabled || !isExtensionContextValid()) return;
     if (document.visibilityState === 'hidden') return;
     for (const entry of entries) {
       if (entry.isIntersecting && entry.target instanceof HTMLElement) {
@@ -438,7 +464,7 @@ const observer = new IntersectionObserver(
 
 // Resize Observer to pick up modal/responsive images as soon as they layout & resize
 const resizeObserver = new ResizeObserver((entries) => {
-  if (!isExtensionContextValid()) return;
+  if (!isDetectorEnabled || !isExtensionContextValid()) return;
   for (const entry of entries) {
     const target = entry.target as HTMLElement;
     if (!target.dataset.veripixelProcessed || target.dataset.veripixelProcessed === 'pending') {
@@ -461,6 +487,7 @@ const resizeObserver = new ResizeObserver((entries) => {
 });
 
 function observeElement(el: HTMLElement, immediateCheck = false): void {
+  if (!isDetectorEnabled) return;
   if (!isValidTargetElement(el)) {
     if (el.dataset.veripixelProcessed) {
       removeBadge(el);
@@ -492,7 +519,7 @@ const TARGET_IMAGE_SELECTOR =
   'img, picture source, [style*="background-image"], [style*="background:"], [role="img"], figure';
 
 function scanDOM(): void {
-  if (!isExtensionContextValid()) return;
+  if (!isDetectorEnabled || !isExtensionContextValid()) return;
   if (document.visibilityState === 'hidden') return;
 
   const elements = Array.from(document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR));
@@ -565,30 +592,54 @@ function handleModalStateCheck(): void {
   });
 }
 
+function setDetectorEnabledState(enabled: boolean): void {
+  if (isDetectorEnabled === enabled && isInitialized) return;
+  isDetectorEnabled = enabled;
+  isInitialized = true;
+  setOverlayEnabled(enabled);
+
+  if (!enabled) {
+    pendingScanQueue.length = 0;
+    activeScanCount = 0;
+    inFlightUrls.clear();
+    if (scanTimer) {
+      clearTimeout(scanTimer);
+      scanTimer = null;
+    }
+    observer.disconnect();
+    resizeObserver.disconnect();
+    removeAllBadges(false);
+  } else {
+    scheduleScanDOM(true);
+    scheduleModalStateCheck();
+  }
+}
+
 // Check persisted extensionEnabled state before running initial DOM scan
 if (isExtensionContextValid()) {
   try {
     chrome.storage.local.get('extensionEnabled', (res) => {
-      if (res && res.extensionEnabled === false) {
-        isDetectorEnabled = false;
-      } else {
-        isDetectorEnabled = true;
-        scheduleScanDOM(true);
-        scheduleModalStateCheck();
-      }
+      const isEnabled = !(res && res.extensionEnabled === false);
+      setDetectorEnabledState(isEnabled);
     });
   } catch {
-    scheduleScanDOM(true);
-    scheduleModalStateCheck();
+    setDetectorEnabledState(true);
   }
+
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.extensionEnabled !== undefined) {
+        setDetectorEnabledState(Boolean(changes.extensionEnabled.newValue));
+      }
+    });
+  } catch {}
 } else {
-  scheduleScanDOM(true);
-  scheduleModalStateCheck();
+  setDetectorEnabledState(true);
 }
 
 // Non-blocking MutationObserver that avoids forced synchronous style recalcs
 const mutationObserver = new MutationObserver((mutations) => {
-  if (!isExtensionContextValid()) return;
+  if (!isDetectorEnabled || !isInitialized || !isExtensionContextValid()) return;
   if (document.visibilityState === 'hidden') return;
 
   let shouldRescan = false;
@@ -683,6 +734,7 @@ mutationObserver.observe(document.documentElement, {
 document.addEventListener(
   'toggle',
   (e) => {
+    if (!isDetectorEnabled) return;
     const target = e.target as HTMLElement;
     if (target && !isDetectorElement(target)) {
       scheduleModalStateCheck();
@@ -694,6 +746,7 @@ document.addEventListener(
 document.addEventListener(
   'close',
   () => {
+    if (!isDetectorEnabled) return;
     scheduleModalStateCheck();
   },
   true
@@ -702,6 +755,7 @@ document.addEventListener(
 document.addEventListener(
   'keydown',
   (e) => {
+    if (!isDetectorEnabled) return;
     if (e.key === 'Escape') {
       scheduleModalStateCheck();
       setTimeout(scheduleModalStateCheck, 100);
@@ -715,7 +769,7 @@ document.addEventListener(
 document.addEventListener(
   'click',
   () => {
-    if (!isExtensionContextValid()) return;
+    if (!isDetectorEnabled || !isExtensionContextValid()) return;
     scheduleModalStateCheck();
     setTimeout(scheduleModalStateCheck, 100);
     setTimeout(scheduleModalStateCheck, 300);
@@ -728,6 +782,7 @@ document.addEventListener(
 document.addEventListener(
   'transitionend',
   (e) => {
+    if (!isDetectorEnabled) return;
     const target = e.target as HTMLElement;
     if (target && !isDetectorElement(target)) {
       scheduleModalStateCheck();
@@ -739,6 +794,7 @@ document.addEventListener(
 document.addEventListener(
   'animationend',
   (e) => {
+    if (!isDetectorEnabled) return;
     const target = e.target as HTMLElement;
     if (target && !isDetectorElement(target)) {
       scheduleModalStateCheck();
@@ -747,12 +803,12 @@ document.addEventListener(
   true
 );
 
-window.addEventListener('resize', scheduleModalStateCheck, { passive: true });
-window.addEventListener('popstate', scheduleModalStateCheck, { passive: true });
+window.addEventListener('resize', () => { if (isDetectorEnabled) scheduleModalStateCheck(); }, { passive: true });
+window.addEventListener('popstate', () => { if (isDetectorEnabled) scheduleModalStateCheck(); }, { passive: true });
 
 // Rescan DOM whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {
-  if (!isExtensionContextValid()) return;
+  if (!isDetectorEnabled || !isExtensionContextValid()) return;
   if (document.visibilityState === 'visible') {
     scheduleModalStateCheck();
     scheduleScanDOM();
@@ -762,19 +818,12 @@ document.addEventListener('visibilitychange', () => {
 // Listen for global state changes and popup jump-to-image requests
 chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
   if (message.type === 'GLOBAL_STATE_CHANGED') {
-    isDetectorEnabled = message.enabled;
-    if (!message.enabled) {
-      pendingScanQueue.length = 0;
-      activeScanCount = 0;
-      removeAllBadges(false);
-    } else {
-      scheduleScanDOM(true);
-      scheduleModalStateCheck();
-    }
+    setDetectorEnabledState(Boolean(message.enabled));
     return;
   }
 
   if (message.type === 'HIGHLIGHT_IMAGE_ON_PAGE') {
+    if (!isDetectorEnabled) return;
     const targetUrl = message.imageUrl;
     const allImages = document.querySelectorAll<HTMLElement>('img, [style*="background"]');
     for (const el of allImages) {

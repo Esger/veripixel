@@ -14,15 +14,30 @@ interface BadgeEntry {
 
 const badgeRegistry = new Map<HTMLElement, BadgeEntry>();
 let prevModalOpen = false;
+let isOverlayActive = false;
+
+export function setOverlayEnabled(enabled: boolean): void {
+  isOverlayActive = enabled;
+  if (!enabled) {
+    removeAllBadges(false);
+  }
+}
+
+export function isOverlayEnabled(): boolean {
+  return isOverlayActive;
+}
 
 export function isDetectorElement(el: Element): boolean {
-  return (
+  if (
     el.classList.contains('detectorBadge') ||
     el.classList.contains('detectorTooltip') ||
     el.classList.contains('detectorRegion') ||
     el.classList.contains('detectorRegions') ||
     el.classList.contains('detectorRegionsWrapper')
-  );
+  ) {
+    return true;
+  }
+  return !!el.closest?.('.detectorBadge, .detectorTooltip, .detectorRegionsWrapper, .detectorRegion, .detectorRegions');
 }
 
 function isInsideHeaderOrNav(el: HTMLElement): boolean {
@@ -431,7 +446,7 @@ export function updateBadgePosition(targetEl: HTMLElement, activeModals?: HTMLEl
 }
 
 function triggerRegionalDeepening(targetEl: HTMLElement, entry: BadgeEntry): void {
-  if (!entry.result || entry.result.sampleMode !== 'fast') return;
+  if (!isOverlayActive || !entry.result || entry.result.sampleMode !== 'fast') return;
   if (entry.isDeepening) return;
   entry.isDeepening = true;
 
@@ -450,6 +465,10 @@ function triggerRegionalDeepening(targetEl: HTMLElement, entry: BadgeEntry): voi
       },
       (response) => {
         entry.isDeepening = false;
+        if (!isOverlayActive) {
+          removeBadge(targetEl);
+          return;
+        }
         if (chrome.runtime.lastError || !response || !response.result) return;
         if (response.result.status === 'complete') {
           const wasTooltipOpen = entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open');
@@ -471,7 +490,7 @@ function triggerRegionalDeepening(targetEl: HTMLElement, entry: BadgeEntry): voi
 }
 
 export function injectLoadingBadge(targetEl: HTMLElement): void {
-  if (targetEl.dataset.aiDetectorBadgeInjected) {
+  if (!isOverlayActive || targetEl.dataset.aiDetectorBadgeInjected) {
     return;
   }
   targetEl.dataset.aiDetectorBadgeInjected = 'loading';
@@ -581,6 +600,10 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
 }
 
 export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
+  if (!isOverlayActive) {
+    removeBadge(targetEl);
+    return;
+  }
   // Ensure loading badge is created if not already present
   if (!targetEl.dataset.aiDetectorBadgeInjected) {
     injectLoadingBadge(targetEl);
@@ -851,6 +874,10 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
                 : `Switch to ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})`;
               return;
             }
+            if (!isOverlayActive) {
+              removeBadge(targetEl);
+              return;
+            }
             if (response.result.status === 'complete') {
               const wasTooltipOpen = tooltipEl.matches && tooltipEl.matches(':popover-open');
               injectImageBadge(targetEl, response.result);
@@ -904,15 +931,49 @@ export function removeBadge(targetEl: HTMLElement, keepProcessedState = false): 
   targetEl.style.removeProperty('anchor-name');
   delete targetEl.dataset.aiDetectorAnchor;
   delete targetEl.dataset.aiDetectorBadgeInjected;
+  delete targetEl.dataset.aiDetectorProcessed;
   if (!keepProcessedState) {
-    delete targetEl.dataset.aiDetectorProcessed;
+    delete targetEl.dataset.veripixelProcessed;
   }
 }
 
 export function removeAllBadges(keepProcessedState = false): void {
+  // 1. Remove all tracked badges from registry
   const elements = Array.from(badgeRegistry.keys());
   for (const el of elements) {
     removeBadge(el, keepProcessedState);
+  }
+  badgeRegistry.clear();
+
+  // 2. Unconditionally clean up ANY badge / tooltip / region elements left anywhere in the DOM
+  try {
+    const lingeringElements = document.querySelectorAll(
+      '.detectorBadge, .detectorTooltip, .detectorRegionsWrapper, .detectorRegion, .detectorRegions'
+    );
+    lingeringElements.forEach((node) => {
+      try {
+        if ((node as HTMLElement).matches && (node as HTMLElement).matches(':popover-open')) {
+          (node as HTMLElement).hidePopover();
+        }
+      } catch (e) {}
+      node.remove();
+    });
+  } catch (e) {}
+
+  // 3. Clean up dataset and styles from target images
+  if (!keepProcessedState) {
+    try {
+      const markedElements = document.querySelectorAll<HTMLElement>(
+        '[data-veripixel-processed], [data-ai-detector-anchor], [data-ai-detector-badge-injected], [data-ai-detector-processed], [style*="anchor-name"]'
+      );
+      markedElements.forEach((el) => {
+        delete el.dataset.veripixelProcessed;
+        delete el.dataset.aiDetectorBadgeInjected;
+        delete el.dataset.aiDetectorAnchor;
+        delete el.dataset.aiDetectorProcessed;
+        el.style.removeProperty('anchor-name');
+      });
+    } catch (e) {}
   }
 }
 

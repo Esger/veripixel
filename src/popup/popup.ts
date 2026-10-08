@@ -267,6 +267,17 @@ if (enabledSwitchEl) {
     const next = enabledSwitchEl.checked;
     updateEnabledUI(next);
     chrome.storage.local.set({ extensionEnabled: next });
+    chrome.runtime.sendMessage({ type: 'SET_GLOBAL_STATE', enabled: next }).catch(() => {});
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id !== undefined) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'GLOBAL_STATE_CHANGED',
+            enabled: next
+          }).catch(() => {});
+        }
+      }
+    });
   });
 }
 

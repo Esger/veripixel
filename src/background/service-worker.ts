@@ -204,22 +204,35 @@ const OFF_ICONS = {
 };
 
 let isExtensionEnabled = true;
+let isExtensionEnabledResolved = false;
 
 // Load persisted state from chrome.storage.local on startup
-chrome.storage.local.get('extensionEnabled', (res) => {
-  if (res && typeof res.extensionEnabled === 'boolean') {
-    isExtensionEnabled = res.extensionEnabled;
-  } else {
-    isExtensionEnabled = true;
-    chrome.storage.local.set({ extensionEnabled: true });
-  }
-  updateGlobalToolbarState();
+const extensionEnabledReady = new Promise<boolean>((resolve) => {
+  chrome.storage.local.get('extensionEnabled', (res) => {
+    if (res && typeof res.extensionEnabled === 'boolean') {
+      isExtensionEnabled = res.extensionEnabled;
+    } else {
+      isExtensionEnabled = true;
+      chrome.storage.local.set({ extensionEnabled: true });
+    }
+    isExtensionEnabledResolved = true;
+    updateGlobalToolbarState();
+    resolve(isExtensionEnabled);
+  });
 });
 
 // React to state changes from popup or background
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.extensionEnabled) {
-    isExtensionEnabled = changes.extensionEnabled.newValue;
+  if (area === 'local' && changes.extensionEnabled !== undefined) {
+    isExtensionEnabled = Boolean(changes.extensionEnabled.newValue);
+    if (!isExtensionEnabled) {
+      inFlightScansPerTab.clear();
+      for (const stats of tabStatsMap.values()) {
+        stats.isScanning = false;
+        saveTabStats(stats).catch(() => {});
+        broadcastTabStatsUpdate(stats);
+      }
+    }
     updateGlobalToolbarState();
     broadcastGlobalState(isExtensionEnabled);
   }
@@ -374,6 +387,10 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       const isSenderActive = tabId !== undefined && currentActiveTabId !== null && tabId === currentActiveTabId;
       const effectivePriority: 'high' | 'normal' | 'background' =
         isModal || priority === 'high' ? 'high' : isSenderActive ? 'normal' : 'background';
+
+      if (!isExtensionEnabledResolved) {
+        await extensionEnabledReady;
+      }
 
       if (!isExtensionEnabled) {
         sendResponse({
@@ -635,6 +652,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
   if (message.type === 'SET_GLOBAL_STATE') {
     isExtensionEnabled = message.enabled;
+    if (!isExtensionEnabled) {
+      inFlightScansPerTab.clear();
+      for (const stats of tabStatsMap.values()) {
+        stats.isScanning = false;
+        saveTabStats(stats).catch(() => {});
+        broadcastTabStatsUpdate(stats);
+      }
+    }
     chrome.storage.local.set({ extensionEnabled: message.enabled }, () => {
       updateGlobalToolbarState();
       broadcastGlobalState(message.enabled);
