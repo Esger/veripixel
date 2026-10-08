@@ -657,7 +657,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     statusModifier = 'mediumAi';
     statusText = 'Possible AI/Edited';
   } else {
-    if (mediaType === 'digital-art') {
+    if (mediaType === 'pen-ink-art') {
+      statusText = 'Authentic Drawing';
+    } else if (mediaType === 'digital-art') {
       statusText = 'Authentic Artwork';
     } else if (mediaType === 'screen-capture') {
       statusText = 'Authentic Screenshot';
@@ -687,7 +689,8 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   } else if (scorePercent >= 30) {
     conciseVerdict = result.reasoning?.type === 'localized-edit' ? 'Edited' : 'Possible AI';
   } else {
-    if (mediaType === 'digital-art') conciseVerdict = 'Artwork';
+    if (mediaType === 'pen-ink-art') conciseVerdict = 'Drawing';
+    else if (mediaType === 'digital-art') conciseVerdict = 'Artwork';
     else if (mediaType === 'screen-capture') conciseVerdict = 'Screenshot';
     else if (mediaType === 'graphic-or-ui') conciseVerdict = 'Graphic';
     else if (mediaType === 'camera-photo') conciseVerdict = 'Photo';
@@ -862,13 +865,15 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     if (result.reasoning.type === 'localized-edit') icon = '🎭';
     else if (result.reasoning.type === 'full-synthetic') icon = '🤖';
     else if (result.reasoning.type === 'likely-real') {
-      if (mediaType === 'digital-art') icon = '🎨';
+      if (mediaType === 'pen-ink-art') icon = '✒️';
+      else if (mediaType === 'digital-art') icon = '🎨';
       else if (mediaType === 'screen-capture') icon = '🖥️';
       else if (mediaType === 'graphic-or-ui') icon = '📐';
       else if (result.metadata.c2paPresent) icon = '🛡️';
       else icon = '📸';
     } else if (result.reasoning.type === 'ambiguous') {
-      if (mediaType === 'screen-capture') icon = '🖥️';
+      if (mediaType === 'pen-ink-art') icon = '✒️';
+      else if (mediaType === 'screen-capture') icon = '🖥️';
       else if (mediaType === 'digital-art') icon = '🎨';
       else icon = '🔍';
     }
@@ -890,12 +895,15 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     result.metadata.cameraModel ||
     (result.metadata.exifPresent
       ? 'Present'
+      : mediaType === 'pen-ink-art'
+      ? 'Physical Drawing Scan'
       : isDigitalNonCamera
       ? 'N/A (Digital Source)'
       : 'None/Stripped');
 
   let mediaTypeLabel = 'Digital Media';
-  if (mediaType === 'digital-art') mediaTypeLabel = 'Digital Art / Illustration';
+  if (mediaType === 'pen-ink-art') mediaTypeLabel = 'Hand-Drawn Sketch / Pen & Ink';
+  else if (mediaType === 'digital-art') mediaTypeLabel = 'Digital Art / Illustration';
   else if (mediaType === 'screen-capture') mediaTypeLabel = 'Screen Capture / Screenshot';
   else if (mediaType === 'graphic-or-ui') mediaTypeLabel = 'Graphic Design / UI';
   else if (mediaType === 'camera-photo') mediaTypeLabel = 'Camera Photograph';

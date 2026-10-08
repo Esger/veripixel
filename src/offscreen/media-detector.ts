@@ -9,6 +9,10 @@ interface PixelStats {
   uniqueColorCount: number;
   uniqueColorRatio: number;
   highSaturationRatio: number;
+  lowSaturationRatio: number;
+  paperRatio: number;
+  inkRatio: number;
+  isPenAndInk: boolean;
   totalSampledPixels: number;
 }
 
@@ -46,6 +50,10 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
       uniqueColorCount: 500,
       uniqueColorRatio: 0.5,
       highSaturationRatio: 0,
+      lowSaturationRatio: 0,
+      paperRatio: 0,
+      inkRatio: 0,
+      isPenAndInk: false,
       totalSampledPixels: 0
     };
   }
@@ -60,6 +68,10 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
 
   let totalSampledPixels = 0;
   let highSatPixels = 0;
+  let lowSatPixels = 0;
+  let paperLumPixels = 0; // > 165
+  let inkLumPixels = 0;   // < 95
+
   const uniqueColorBins = new Set<number>();
 
   for (const patch of patchesToSample) {
@@ -110,7 +122,7 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
       }
     }
 
-    // 2. Palette quantization & saturation sampling
+    // 2. Palette quantization, saturation, and paper/ink luminance sampling
     // Step by 53 (prime stride) across the patch for uniform sampling
     const totalPixelsInPatch = w * h;
     for (let p = 0; p < totalPixelsInPatch; p += 53) {
@@ -128,23 +140,54 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
       // Saturation calculation: (max - min) / max
       const max = Math.max(r, g, b);
       const min = Math.min(r, g, b);
-      if (max > 30) {
-        const sat = (max - min) / max;
-        if (sat > 0.75) {
-          highSatPixels++;
-        }
+      const sat = max > 0 ? (max - min) / max : 0;
+      if (sat > 0.75) {
+        highSatPixels++;
+      }
+      if (sat < 0.20) {
+        lowSatPixels++;
+      }
+
+      // Relative luminance
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (lum > 165) {
+        paperLumPixels++;
+      } else if (lum < 95) {
+        inkLumPixels++;
       }
     }
   }
 
+  const exactFlatRatio = totalPairs > 0 ? exactFlatPairs / totalPairs : 0;
+  const subtleFlatRatio = totalPairs > 0 ? subtleFlatPairs / totalPairs : 0;
+  const textureRatio = totalPairs > 0 ? texturePairs / totalPairs : 0;
+  const sharpEdgeRatio = totalPairs > 0 ? sharpEdgePairs / totalPairs : 0;
+  const lowSaturationRatio = totalSampledPixels > 0 ? lowSatPixels / totalSampledPixels : 0;
+  const paperRatio = totalSampledPixels > 0 ? paperLumPixels / totalSampledPixels : 0;
+  const inkRatio = totalSampledPixels > 0 ? inkLumPixels / totalSampledPixels : 0;
+
+  // Hand-drawn sketch / pen & ink drawing on physical paper:
+  // Predominantly desaturated (ink + paper), bimodal paper-and-ink luminance, sharp stroke edges, and analog paper texture
+  const isPenAndInk =
+    lowSaturationRatio > 0.65 &&
+    paperRatio + inkRatio > 0.70 &&
+    inkRatio > 0.05 &&
+    sharpEdgeRatio > 0.015 &&
+    exactFlatRatio < 0.28 &&
+    textureRatio > 0.25;
+
   return {
-    exactFlatRatio: totalPairs > 0 ? exactFlatPairs / totalPairs : 0,
-    subtleFlatRatio: totalPairs > 0 ? subtleFlatPairs / totalPairs : 0,
-    textureRatio: totalPairs > 0 ? texturePairs / totalPairs : 0,
-    sharpEdgeRatio: totalPairs > 0 ? sharpEdgePairs / totalPairs : 0,
+    exactFlatRatio,
+    subtleFlatRatio,
+    textureRatio,
+    sharpEdgeRatio,
     uniqueColorCount: uniqueColorBins.size,
     uniqueColorRatio: totalSampledPixels > 0 ? uniqueColorBins.size / totalSampledPixels : 0.8,
     highSaturationRatio: totalSampledPixels > 0 ? highSatPixels / totalSampledPixels : 0,
+    lowSaturationRatio,
+    paperRatio,
+    inkRatio,
+    isPenAndInk,
     totalSampledPixels
   };
 }
@@ -159,12 +202,19 @@ export function detectMediaType(
   metadata: MetadataResult,
   patches: ExtractedPatch[]
 ): MediaType {
-  // 1. Definite camera photo: verified camera hardware Make/Model or authentic camera EXIF
+  const stats = analyzeCanvasPixels(patches);
+
+  // 1. Hand-drawn sketch / pen & ink drawing on physical paper
+  // Prioritized to prevent camera-trained diffusion models from misclassifying manual cross-hatching
+  if (stats.isPenAndInk) {
+    return 'pen-ink-art';
+  }
+
+  // 2. Definite camera photo: verified camera hardware Make/Model or authentic camera EXIF
   if (metadata.cameraModel || (metadata.exifPresent && !metadata.aiProvenancePresent)) {
     return 'camera-photo';
   }
 
-  const stats = analyzeCanvasPixels(patches);
   const isExactScreen = isExactScreenResolution(width, height);
 
   const longEdge = Math.max(width, height);
@@ -178,7 +228,7 @@ export function detectMediaType(
       Math.abs(aspect - 21 / 9) < 0.05) &&
     longEdge >= 1000;
 
-  // 2. Graphic Design / UI (flat vector panels, solid icons, minimal quantized palette, zero natural texture)
+  // 3. Graphic Design / UI (flat vector panels, solid icons, minimal quantized palette, zero natural texture)
   if (
     stats.exactFlatRatio > 0.75 ||
     (stats.exactFlatRatio > 0.50 &&
@@ -193,7 +243,7 @@ export function detectMediaType(
     return 'graphic-or-ui';
   }
 
-  // 3. Digital 2D Cel-Shaded Artwork / Anime / Cartoon / Vector Illustration
+  // 4. Digital 2D Cel-Shaded Artwork / Anime / Cartoon / Vector Illustration
   // Characterized by flat cel fills, line art outlines or high digital saturation, low micro-texture, small palette
   if (
     (stats.exactFlatRatio > 0.35 &&
@@ -208,14 +258,14 @@ export function detectMediaType(
     return 'digital-art';
   }
 
-  // 4. Screen Capture (exact screen resolution or screen aspect with digital UI flatness and lack of texture)
+  // 5. Screen Capture (exact screen resolution or screen aspect with digital UI flatness and lack of texture)
   if ((isExactScreen || isScreenAspect) && !metadata.exifPresent) {
     if (stats.exactFlatRatio > 0.45 && stats.textureRatio < 0.28) {
       return 'screen-capture';
     }
   }
 
-  // 5. Photographic Capture (Natural continuous micro-texture or rich continuous palette)
+  // 6. Photographic Capture (Natural continuous micro-texture or rich continuous palette)
   if (stats.textureRatio >= 0.22 || stats.uniqueColorCount >= 100) {
     return 'camera-photo';
   }
@@ -226,6 +276,8 @@ export function detectMediaType(
 
 export function formatMediaTypeLabel(mediaType?: MediaType): string {
   switch (mediaType) {
+    case 'pen-ink-art':
+      return 'Hand-Drawn Sketch / Pen & Ink';
     case 'digital-art':
       return 'Digital Artwork / Illustration';
     case 'screen-capture':

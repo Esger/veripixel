@@ -87,7 +87,9 @@ function createImageCardElement(img: ImageSummary): HTMLElement {
     verdictClass = 'popupView__verdictBadge--edited';
     badgeLabel = 'Edited';
   } else {
-    if (img.mediaType === 'digital-art') {
+    if (img.mediaType === 'pen-ink-art') {
+      badgeLabel = 'Drawing';
+    } else if (img.mediaType === 'digital-art') {
       badgeLabel = 'Artwork';
     } else if (img.mediaType === 'screen-capture') {
       badgeLabel = 'Screenshot';
@@ -131,6 +133,11 @@ function createImageCardElement(img: ImageSummary): HTMLElement {
     cameraTag.className = 'popupView__cameraTag';
     cameraTag.textContent = img.cameraModel;
     tagGroup.appendChild(cameraTag);
+  } else if (img.mediaType === 'pen-ink-art') {
+    const mediaTag = document.createElement('span');
+    mediaTag.className = 'popupView__cameraTag';
+    mediaTag.textContent = 'Drawing';
+    tagGroup.appendChild(mediaTag);
   } else if (img.mediaType === 'screen-capture') {
     const mediaTag = document.createElement('span');
     mediaTag.className = 'popupView__cameraTag';

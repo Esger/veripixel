@@ -32,7 +32,7 @@ export interface GridDimensions {
   total: number;
 }
 
-export type MediaType = 'camera-photo' | 'digital-art' | 'screen-capture' | 'graphic-or-ui' | 'general-media';
+export type MediaType = 'camera-photo' | 'digital-art' | 'screen-capture' | 'graphic-or-ui' | 'pen-ink-art' | 'general-media';
 
 export interface ForensicReasoning {
   type: 'full-synthetic' | 'localized-edit' | 'likely-real' | 'ambiguous';
