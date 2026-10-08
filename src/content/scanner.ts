@@ -91,6 +91,9 @@ function isValidTargetElement(el: HTMLElement): boolean {
   if (el instanceof HTMLImageElement) {
     const naturalWidth = el.naturalWidth || 0;
     const naturalHeight = el.naturalHeight || 0;
+    if (naturalWidth === 0 && naturalHeight === 0 && el.complete) {
+      return false;
+    }
     if (naturalWidth > 0 && naturalHeight > 0) {
       if (naturalWidth < MIN_IMAGE_SIZE && naturalHeight < MIN_IMAGE_SIZE) {
         return false;
@@ -150,23 +153,119 @@ const MAX_CONCURRENT_PAGE_SCANS = 2; // Capped to 2 to leave CPU and IPC respons
 let activeScanCount = 0;
 const pendingScanQueue: HTMLElement[] = [];
 
-function enqueueElementForScan(el: HTMLElement): void {
+function pruneOffscreenFromQueue(): void {
+  const activeModals = getActiveModalElements();
+  for (let i = pendingScanQueue.length - 1; i >= 0; i--) {
+    const el = pendingScanQueue[i];
+    const isModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    if (!isModal && !isElementInViewport(el)) {
+      pendingScanQueue.splice(i, 1);
+    }
+  }
+}
+
+function sortElementsByVisualOrder(elements: HTMLElement[], activeModals = getActiveModalElements()): void {
+  elements.sort((a, b) => {
+    // 1. Elements inside active modals have highest priority
+    const aModal = activeModals.length > 0 && isElementInsideActiveModal(a, activeModals);
+    const bModal = activeModals.length > 0 && isElementInsideActiveModal(b, activeModals);
+    if (aModal && !bModal) return -1;
+    if (!aModal && bModal) return 1;
+
+    // 2. Elements visible in viewport come before offscreen elements
+    const aInVp = isElementInViewport(a);
+    const bInVp = isElementInViewport(b);
+    if (aInVp && !bInVp) return -1;
+    if (!aInVp && bInVp) return 1;
+
+    // 3. Natural visual reading order: top-to-bottom, left-to-right
+    if (aInVp && bInVp) {
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      // If vertical offset differs by more than 30px (separate rows in grid / masonry),
+      // order strictly by top coordinate (top-to-bottom)
+      if (Math.abs(ra.top - rb.top) > 30) {
+        return ra.top - rb.top;
+      }
+      // Within the same visual horizontal row, order left-to-right
+      return ra.left - rb.left;
+    }
+
+    return 0;
+  });
+}
+
+function enqueueElementForScan(el: HTMLElement, triggerPump = true): boolean {
   if (
     !isDetectorEnabled ||
     !isExtensionContextValid() ||
+    document.visibilityState === 'hidden' ||
     el.dataset.veripixelProcessed === 'true' ||
     el.dataset.veripixelProcessed === 'analyzing'
   ) {
-    return;
+    return false;
   }
+
+  // Only enqueue elements currently in viewport or in active modal.
+  // Images scrolled out of the viewport wait until they are scrolled back into view.
+  const activeModals = getActiveModalElements();
+  const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+  const inVp = isElementInViewport(el);
+
+  if (!isInsideModal && !inVp) {
+    return false;
+  }
+
   if (!pendingScanQueue.includes(el)) {
-    // Bound queue length to 10 to prevent massive background backlogs on infinite scroll
-    if (pendingScanQueue.length >= 10) {
-      return;
+    if (pendingScanQueue.length >= 100) {
+      pruneOffscreenFromQueue();
+      if (pendingScanQueue.length >= 100) {
+        return false;
+      }
     }
     pendingScanQueue.push(el);
+    if (triggerPump) {
+      pumpScanQueue();
+    }
+    return true;
   }
-  pumpScanQueue();
+  return false;
+}
+
+let unhandledCheckTimer: any = null;
+function scheduleUnhandledCheck(): void {
+  if (!isDetectorEnabled || !isExtensionContextValid() || document.visibilityState === 'hidden') return;
+  if (unhandledCheckTimer) return;
+  unhandledCheckTimer = setTimeout(() => {
+    unhandledCheckTimer = null;
+    if (!isDetectorEnabled || activeScanCount >= MAX_CONCURRENT_PAGE_SCANS) return;
+
+    const elements = document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR);
+    const activeModals = getActiveModalElements();
+    let newlyEnqueued = false;
+
+    for (const el of elements) {
+      if (el.dataset.veripixelProcessed === 'true' || el.dataset.veripixelProcessed === 'analyzing') {
+        continue;
+      }
+      if (!isValidTargetElement(el)) continue;
+
+      const isModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+      const inVp = isElementInViewport(el);
+
+      if (isModal || inVp) {
+        if (!pendingScanQueue.includes(el)) {
+          pendingScanQueue.push(el);
+          newlyEnqueued = true;
+        }
+      }
+    }
+
+    if (newlyEnqueued) {
+      sortElementsByVisualOrder(pendingScanQueue, activeModals);
+      pumpScanQueue();
+    }
+  }, 120);
 }
 
 function pumpScanQueue(): void {
@@ -179,48 +278,45 @@ function pumpScanQueue(): void {
     return;
   }
 
-  // Prune invalid or already processed elements
+  // Prune invalid, disconnected, already processed, or offscreen elements
+  const activeModals = getActiveModalElements();
   for (let i = pendingScanQueue.length - 1; i >= 0; i--) {
     const el = pendingScanQueue[i];
-    if (!document.contains(el) || !isValidTargetElement(el) || el.dataset.veripixelProcessed === 'true') {
+    if (
+      !el.isConnected ||
+      !document.contains(el) ||
+      !isValidTargetElement(el) ||
+      el.dataset.veripixelProcessed === 'true'
+    ) {
       pendingScanQueue.splice(i, 1);
+      continue;
+    }
+
+    // Images that have scrolled out of the viewport wait until they are scrolled back in
+    const isModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    const inVp = isElementInViewport(el);
+    if (!isModal && !inVp) {
+      pendingScanQueue.splice(i, 1);
+      continue;
     }
   }
 
-  // Priority sorting:
-  // 1. Modals first
-  // 2. Visible elements closest to viewport center
-  // 3. Offscreen elements
-  const activeModals = getActiveModalElements();
-  const vCenterY = window.innerHeight / 2;
-
-  pendingScanQueue.sort((a, b) => {
-    const aModal = activeModals.length > 0 && isElementInsideActiveModal(a, activeModals);
-    const bModal = activeModals.length > 0 && isElementInsideActiveModal(b, activeModals);
-    if (aModal && !bModal) return -1;
-    if (!aModal && bModal) return 1;
-
-    const aInVp = isElementInViewport(a);
-    const bInVp = isElementInViewport(b);
-    if (aInVp && !bInVp) return -1;
-    if (!aInVp && bInVp) return 1;
-
-    if (aInVp && bInVp) {
-      const ra = a.getBoundingClientRect();
-      const rb = b.getBoundingClientRect();
-      const aDist = Math.abs(ra.top + ra.height / 2 - vCenterY);
-      const bDist = Math.abs(rb.top + rb.height / 2 - vCenterY);
-      return aDist - bDist;
-    }
-
-    return 0;
-  });
+  // Sort remaining elements in visual reading order
+  sortElementsByVisualOrder(pendingScanQueue, activeModals);
 
   while (activeScanCount < MAX_CONCURRENT_PAGE_SCANS && pendingScanQueue.length > 0) {
     const nextEl = pendingScanQueue.shift();
     if (!nextEl) break;
 
     if (nextEl.dataset.veripixelProcessed === 'true' || nextEl.dataset.veripixelProcessed === 'analyzing') {
+      continue;
+    }
+
+    const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(nextEl, activeModals);
+    const inViewport = isElementInViewport(nextEl);
+
+    // Skip if scrolled out of the viewport while queued
+    if (!isInsideModal && !inViewport) {
       continue;
     }
 
@@ -231,6 +327,11 @@ function pumpScanQueue(): void {
         activeScanCount--;
         pumpScanQueue();
       });
+  }
+
+  // When queue is empty and slots are open, continue handling any unhandled visible elements
+  if (pendingScanQueue.length === 0 && activeScanCount < MAX_CONCURRENT_PAGE_SCANS) {
+    scheduleUnhandledCheck();
   }
 }
 
@@ -253,17 +354,24 @@ function processElement(el: HTMLElement): Promise<void> {
     }
 
     // If image dimensions are not loaded yet (for <img>), attach load event listener
-    if (el instanceof HTMLImageElement && (!el.complete || (el.naturalWidth === 0 && el.width === 0))) {
-      const onLoad = () => {
-        el.removeEventListener('load', onLoad);
+    if (el instanceof HTMLImageElement && !el.complete) {
+      const onImageReady = () => {
+        el.removeEventListener('load', onImageReady);
+        el.removeEventListener('error', onImageError);
         const inVp = isElementInViewport(el);
-        const activeModals = getActiveModalElements();
-        const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
-        if (inVp || isInsideModal) {
+        const modals = getActiveModalElements();
+        const inModal = modals.length > 0 && isElementInsideActiveModal(el, modals);
+        if (inVp || inModal) {
           enqueueElementForScan(el);
         }
       };
-      el.addEventListener('load', onLoad);
+      const onImageError = () => {
+        el.removeEventListener('load', onImageReady);
+        el.removeEventListener('error', onImageError);
+        el.dataset.veripixelProcessed = 'failed';
+      };
+      el.addEventListener('load', onImageReady, { once: true });
+      el.addEventListener('error', onImageError, { once: true });
       resolve();
       return;
     }
@@ -272,6 +380,16 @@ function processElement(el: HTMLElement): Promise<void> {
       if (el.dataset.veripixelProcessed) {
         removeBadge(el);
       }
+      resolve();
+      return;
+    }
+
+    const activeModals = getActiveModalElements();
+    const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    const inViewport = isElementInViewport(el);
+
+    // If element scrolled out of the viewport, wait until it is scrolled back into view
+    if (!isInsideModal && !inViewport) {
       resolve();
       return;
     }
@@ -293,9 +411,6 @@ function processElement(el: HTMLElement): Promise<void> {
     injectLoadingBadge(el);
     inFlightUrls.add(imageUrl);
 
-    const activeModals = getActiveModalElements();
-    const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
-    const inViewport = isElementInViewport(el);
     const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
 
     const sendDataUrlAnalysis = async () => {
@@ -442,23 +557,30 @@ function processElement(el: HTMLElement): Promise<void> {
   });
 }
 
-// Intersection Observer for lazy scanning (50px tight margin so only genuinely visible images scan)
+// Intersection Observer for lazy scanning as images scroll into view
 const observer = new IntersectionObserver(
   (entries) => {
     if (!isDetectorEnabled || !isExtensionContextValid()) return;
     if (document.visibilityState === 'hidden') return;
+    let hasNew = false;
     for (const entry of entries) {
       if (entry.isIntersecting && entry.target instanceof HTMLElement) {
-        if (!entry.target.dataset.veripixelProcessed || entry.target.dataset.veripixelProcessed === 'pending') {
-          enqueueElementForScan(entry.target);
+        const el = entry.target;
+        if (!el.dataset.veripixelProcessed || el.dataset.veripixelProcessed === 'pending') {
+          if (enqueueElementForScan(el, false)) {
+            hasNew = true;
+          }
         }
       }
+    }
+    if (hasNew) {
+      pumpScanQueue();
     }
   },
   {
     root: null,
-    rootMargin: '50px',
-    threshold: 0.01
+    rootMargin: '0px',
+    threshold: [0, 0.25, 0.5, 0.75, 1.0]
   }
 );
 
@@ -498,21 +620,101 @@ function observeElement(el: HTMLElement, immediateCheck = false): void {
   observer.observe(el);
   resizeObserver.observe(el);
 
-  if (immediateCheck && (!el.dataset.veripixelProcessed || el.dataset.veripixelProcessed === 'pending')) {
-    enqueueElementForScan(el);
+  if (immediateCheck) {
+    const activeModals = getActiveModalElements();
+    const isInsideModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    if (isInsideModal || isElementInViewport(el)) {
+      enqueueElementForScan(el);
+    }
   }
 }
 
 function isElementInViewport(el: HTMLElement): boolean {
+  if (!el.isConnected) return false;
   const rect = el.getBoundingClientRect();
-  return (
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.top < window.innerHeight &&
-    rect.bottom > 0 &&
-    rect.left < window.innerWidth &&
-    rect.right > 0
-  );
+  if (rect.width <= 0 || rect.height <= 0) return false;
+
+  // Must at least be within the horizontal bounds of the screen
+  if (rect.right <= 0 || rect.left >= window.innerWidth) {
+    return false;
+  }
+
+  // Check hidden attributes and styles
+  if (el.getAttribute('aria-hidden') === 'true') return false;
+  if (el.getAttribute('hidden') !== null) return false;
+  const style = window.getComputedStyle(el);
+  if (style.visibility === 'hidden' || style.display === 'none' || parseFloat(style.opacity || '1') <= 0.05) {
+    return false;
+  }
+
+  // Vertical visible fraction: must have at least 75% of its height visible (<= 25% out of viewport)
+  const visibleTop = Math.max(0, rect.top);
+  const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+  const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+
+  const effectiveHeight = Math.min(rect.height, window.innerHeight);
+  return visibleHeight / effectiveHeight >= 0.75;
+}
+
+let scrollRafId: number | null = null;
+function handleScrollOrResize(): void {
+  if (!isDetectorEnabled || !isExtensionContextValid()) return;
+  if (document.visibilityState === 'hidden') return;
+
+  if (scrollRafId !== null) return;
+  scrollRafId = requestAnimationFrame(() => {
+    scrollRafId = null;
+    onViewportChanged();
+  });
+}
+
+function onViewportChanged(): void {
+  if (!isDetectorEnabled || !isExtensionContextValid()) return;
+  if (document.visibilityState === 'hidden') return;
+
+  scheduleModalStateCheck();
+
+  // Prune any elements from pendingScanQueue that have scrolled out of the viewport
+  // Images that are scrolled out of the viewport can wait until they are scrolled back into view
+  const activeModals = getActiveModalElements();
+  for (let i = pendingScanQueue.length - 1; i >= 0; i--) {
+    const el = pendingScanQueue[i];
+    const inModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    const inVp = isElementInViewport(el);
+    if (!inModal && !inVp) {
+      pendingScanQueue.splice(i, 1);
+    }
+  }
+
+  // Find unhandled visible elements in the current viewport and enqueue them in reading order
+  const elements = document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR);
+  const newlyVisible: HTMLElement[] = [];
+
+  for (const el of elements) {
+    if (el.dataset.veripixelProcessed === 'true' || el.dataset.veripixelProcessed === 'analyzing') {
+      continue;
+    }
+    if (!isValidTargetElement(el)) continue;
+
+    const inModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    const inVp = isElementInViewport(el);
+
+    if (inModal || inVp) {
+      observeElement(el);
+      if (!pendingScanQueue.includes(el)) {
+        newlyVisible.push(el);
+      }
+    }
+  }
+
+  if (newlyVisible.length > 0) {
+    sortElementsByVisualOrder(newlyVisible, activeModals);
+    for (const el of newlyVisible) {
+      pendingScanQueue.push(el);
+    }
+  }
+
+  pumpScanQueue();
 }
 
 const TARGET_IMAGE_SELECTOR =
@@ -524,42 +726,37 @@ function scanDOM(): void {
 
   const elements = Array.from(document.querySelectorAll<HTMLElement>(TARGET_IMAGE_SELECTOR));
   const visibleElements: HTMLElement[] = [];
-  const offscreenElements: HTMLElement[] = [];
+  const activeModals = getActiveModalElements();
 
   for (const el of elements) {
     if (!isValidTargetElement(el)) continue;
-    if (isElementInViewport(el)) {
+
+    // Observe element for lazy scanning and layout changes
+    observeElement(el);
+
+    if (el.dataset.veripixelProcessed === 'true' || el.dataset.veripixelProcessed === 'analyzing') {
+      continue;
+    }
+
+    const isModal = activeModals.length > 0 && isElementInsideActiveModal(el, activeModals);
+    const inVp = isElementInViewport(el);
+
+    if (isModal || inVp) {
       visibleElements.push(el);
-    } else {
-      offscreenElements.push(el);
     }
   }
 
-  // Sort visible elements top-to-bottom, left-to-right (visual reading order)
-  // This guarantees that all columns in multi-column CSS / masonry layouts (like Pixlr) are scanned in visual order
-  visibleElements.sort((a, b) => {
-    const ra = a.getBoundingClientRect();
-    const rb = b.getBoundingClientRect();
-    if (Math.abs(ra.top - rb.top) > 20) {
-      return ra.top - rb.top;
+  // Sort visible elements in visual reading order (top-to-bottom, left-to-right)
+  sortElementsByVisualOrder(visibleElements, activeModals);
+
+  // Enqueue all visible elements above the fold so scanning continues seamlessly
+  for (const el of visibleElements) {
+    if (!pendingScanQueue.includes(el)) {
+      pendingScanQueue.push(el);
     }
-    return ra.left - rb.left;
-  });
+  }
 
-  // Prioritize and immediately process the top 6 most prominent visible elements.
-  // The rest are observed lazily via IntersectionObserver, preventing CPU and IPC flooding on infinite-scroll pages like Pinterest.
-  const MAX_IMMEDIATE_VISIBLE_SCANS = 6;
-  visibleElements.slice(0, MAX_IMMEDIATE_VISIBLE_SCANS).forEach((el) => {
-    observeElement(el, true);
-  });
-  visibleElements.slice(MAX_IMMEDIATE_VISIBLE_SCANS).forEach((el) => {
-    observeElement(el, false);
-  });
-
-  // Observe offscreen elements for lazy scanning via IntersectionObserver
-  offscreenElements.forEach((el) => {
-    observeElement(el, false);
-  });
+  pumpScanQueue();
 }
 
 let modalCheckScheduled = false;
@@ -605,6 +802,14 @@ function setDetectorEnabledState(enabled: boolean): void {
     if (scanTimer) {
       clearTimeout(scanTimer);
       scanTimer = null;
+    }
+    if (unhandledCheckTimer) {
+      clearTimeout(unhandledCheckTimer);
+      unhandledCheckTimer = null;
+    }
+    if (scrollRafId !== null) {
+      cancelAnimationFrame(scrollRafId);
+      scrollRafId = null;
     }
     observer.disconnect();
     resizeObserver.disconnect();
@@ -803,7 +1008,8 @@ document.addEventListener(
   true
 );
 
-window.addEventListener('resize', () => { if (isDetectorEnabled) scheduleModalStateCheck(); }, { passive: true });
+document.addEventListener('scroll', handleScrollOrResize, { passive: true, capture: true });
+window.addEventListener('resize', handleScrollOrResize, { passive: true });
 window.addEventListener('popstate', () => { if (isDetectorEnabled) scheduleModalStateCheck(); }, { passive: true });
 
 // Rescan DOM whenever user switches back to this tab
