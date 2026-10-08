@@ -324,8 +324,8 @@ function generateForensicReasoning(
     if (mediaType === 'pen-ink-art') {
       return {
         type: 'likely-real',
-        title: 'Authentic Pen & Ink / Hand-Drawn Sketch',
-        description: 'Natural hand-drawn line stroke variation and physical paper texture verified across sampled regions. Manual cross-hatching patterns confirmed non-synthetic.',
+        title: 'Authentic Hand-Drawn Artwork / Sketch',
+        description: 'Natural hand-drawn stroke variation and physical paper texture verified across sampled regions. Manual line work and hatching confirmed non-synthetic.',
         mediaType
       };
     }

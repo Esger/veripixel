@@ -2,6 +2,7 @@ import { ExtensionMessage, AnalysisResult, TabScanStats, ImageSummary } from '..
 import { logger } from './logger';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
+const CACHE_VERSION = 'v2';
 
 // Cache for results in session storage using SHA-256 hash keys to prevent quota exhaustion from data URLs
 async function getCacheKey(url: string, sampleMode?: string): Promise<string> {
@@ -12,9 +13,9 @@ async function getCacheKey(url: string, sampleMode?: string): Promise<string> {
     const hashHex = Array.from(new Uint8Array(hashBuffer))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
-    return `img_${hashHex}`;
+    return `${CACHE_VERSION}_img_${hashHex}`;
   }
-  return `img_${full}`;
+  return `${CACHE_VERSION}_img_${full}`;
 }
 
 async function getCachedResult(url: string, sampleMode?: string): Promise<AnalysisResult | null> {
@@ -242,6 +243,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
     updateGlobalToolbarState();
     broadcastGlobalState(isExtensionEnabled);
   }
+});
+
+// Clear stale session caches upon extension install or version update
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.session.clear().catch(() => {});
+  logger.log('[Background] Extension installed/updated, session cache cleared.');
 });
 
 function updateGlobalToolbarState(): void {

@@ -166,15 +166,30 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
   const paperRatio = totalSampledPixels > 0 ? paperLumPixels / totalSampledPixels : 0;
   const inkRatio = totalSampledPixels > 0 ? inkLumPixels / totalSampledPixels : 0;
 
-  // Hand-drawn sketch / pen & ink drawing on physical paper:
-  // Predominantly desaturated (ink + paper), bimodal paper-and-ink luminance, sharp stroke edges, and analog paper texture
-  const isPenAndInk =
-    lowSaturationRatio > 0.65 &&
-    paperRatio + inkRatio > 0.70 &&
+  // Hand-drawn artwork, sketches, pen & ink, or colored marker/pencil drawings on physical paper:
+  // Real paper has analog surface grain (textureRatio > 0.25) and is not digitally dead-flat (exactFlatRatio < 0.25).
+  // Real drawings have manual stroke boundaries (sharpEdgeRatio > 0.012).
+  const hasPaperTextureAndStrokes =
+    textureRatio > 0.25 &&
+    exactFlatRatio < 0.25 &&
+    sharpEdgeRatio > 0.012;
+
+  // Case 1: Monochrome / Ballpoint Pen & Ink / Pencil / Charcoal
+  // High desaturation, bimodal paper and ink luminance
+  const isMonochromeDrawing =
+    lowSaturationRatio > 0.60 &&
+    paperRatio + inkRatio > 0.68 &&
     inkRatio > 0.05 &&
-    sharpEdgeRatio > 0.015 &&
-    exactFlatRatio < 0.28 &&
-    textureRatio > 0.25;
+    paperRatio > 0.20;
+
+  // Case 2: Colored Sketch / Marker Art / Felt-Tip Pens / Colored Pencils / Pastels on Paper
+  // Substantial paper substrate visible behind the drawing, line strokes and colored/dark marks
+  const isColoredDrawing =
+    paperRatio > 0.22 &&
+    inkRatio > 0.08 &&
+    paperRatio + inkRatio > 0.55;
+
+  const isPenAndInk = hasPaperTextureAndStrokes && (isMonochromeDrawing || isColoredDrawing);
 
   return {
     exactFlatRatio,
@@ -277,7 +292,7 @@ export function detectMediaType(
 export function formatMediaTypeLabel(mediaType?: MediaType): string {
   switch (mediaType) {
     case 'pen-ink-art':
-      return 'Hand-Drawn Sketch / Pen & Ink';
+      return 'Hand-Drawn Artwork / Sketch';
     case 'digital-art':
       return 'Digital Artwork / Illustration';
     case 'screen-capture':

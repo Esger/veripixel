@@ -902,7 +902,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       : 'None/Stripped');
 
   let mediaTypeLabel = 'Digital Media';
-  if (mediaType === 'pen-ink-art') mediaTypeLabel = 'Hand-Drawn Sketch / Pen & Ink';
+  if (mediaType === 'pen-ink-art') mediaTypeLabel = 'Hand-Drawn Artwork / Sketch';
   else if (mediaType === 'digital-art') mediaTypeLabel = 'Digital Art / Illustration';
   else if (mediaType === 'screen-capture') mediaTypeLabel = 'Screen Capture / Screenshot';
   else if (mediaType === 'graphic-or-ui') mediaTypeLabel = 'Graphic Design / UI';
