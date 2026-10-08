@@ -2,10 +2,14 @@ import { MediaType, MetadataResult } from '../shared/types';
 import { ExtractedPatch } from './patch-extractor';
 
 interface PixelStats {
-  flatRatio: number;
+  exactFlatRatio: number;
+  subtleFlatRatio: number;
+  textureRatio: number;
+  sharpEdgeRatio: number;
+  uniqueColorCount: number;
   uniqueColorRatio: number;
   highSaturationRatio: number;
-  sharpEdgeRatio: number;
+  totalSampledPixels: number;
 }
 
 const COMMON_SCREEN_RESOLUTIONS: ReadonlyArray<[number, number]> = [
@@ -35,17 +39,23 @@ function isExactScreenResolution(width: number, height: number): boolean {
 function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
   if (patches.length === 0) {
     return {
-      flatRatio: 0,
-      uniqueColorRatio: 0.8,
+      exactFlatRatio: 0,
+      subtleFlatRatio: 0,
+      textureRatio: 0.6,
+      sharpEdgeRatio: 0,
+      uniqueColorCount: 500,
+      uniqueColorRatio: 0.5,
       highSaturationRatio: 0,
-      sharpEdgeRatio: 0
+      totalSampledPixels: 0
     };
   }
 
-  // Sample from the first 2 patches for fast, representative statistics
-  const patchesToSample = patches.slice(0, 2);
+  // Sample across all available crops (up to 4) for holistic representation across the image
+  const patchesToSample = patches.slice(0, 4);
   let totalPairs = 0;
-  let flatPairs = 0;
+  let exactFlatPairs = 0;
+  let subtleFlatPairs = 0;
+  let texturePairs = 0;
   let sharpEdgePairs = 0;
 
   let totalSampledPixels = 0;
@@ -61,7 +71,7 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
     const w = patch.canvas.width;
     const h = patch.canvas.height;
 
-    // 1. Horizontal neighbor differences (flat ratio and sharp edge ratio)
+    // 1. Horizontal neighbor differences (exact flat, subtle flat, micro-texture, and sharp edges)
     // Sample every 2nd row to remain lightning-fast (<1ms)
     for (let y = 0; y < h; y += 2) {
       const rowOffset = y * w * 4;
@@ -77,24 +87,31 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
         const g2 = data[i2 + 1];
         const b2 = data[i2 + 2];
 
-        const diff = Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
         totalPairs++;
 
+        if (r1 === r2 && g1 === g2 && b1 === b2) {
+          exactFlatPairs++;
+        }
+
+        const diff = Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
         if (diff <= 1) {
-          flatPairs++;
+          subtleFlatPairs++;
+        } else if (diff <= 36) {
+          // Natural analog texture / camera sensor noise / surface grain
+          texturePairs++;
         }
 
         // Relative luminance comparison
         const lum1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
         const lum2 = 0.299 * r2 + 0.587 * g2 + 0.114 * b2;
-        if (Math.abs(lum1 - lum2) > 115) {
+        if (Math.abs(lum1 - lum2) > 100) {
           sharpEdgePairs++;
         }
       }
     }
 
     // 2. Palette quantization & saturation sampling
-    // Step by 53 (prime stride) across the patch for uniform sampling (~946 pixels)
+    // Step by 53 (prime stride) across the patch for uniform sampling
     const totalPixelsInPatch = w * h;
     for (let p = 0; p < totalPixelsInPatch; p += 53) {
       const idx = p * 4;
@@ -113,7 +130,7 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
       const min = Math.min(r, g, b);
       if (max > 30) {
         const sat = (max - min) / max;
-        if (sat > 0.70) {
+        if (sat > 0.75) {
           highSatPixels++;
         }
       }
@@ -121,16 +138,20 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
   }
 
   return {
-    flatRatio: totalPairs > 0 ? flatPairs / totalPairs : 0,
+    exactFlatRatio: totalPairs > 0 ? exactFlatPairs / totalPairs : 0,
+    subtleFlatRatio: totalPairs > 0 ? subtleFlatPairs / totalPairs : 0,
+    textureRatio: totalPairs > 0 ? texturePairs / totalPairs : 0,
+    sharpEdgeRatio: totalPairs > 0 ? sharpEdgePairs / totalPairs : 0,
+    uniqueColorCount: uniqueColorBins.size,
     uniqueColorRatio: totalSampledPixels > 0 ? uniqueColorBins.size / totalSampledPixels : 0.8,
     highSaturationRatio: totalSampledPixels > 0 ? highSatPixels / totalSampledPixels : 0,
-    sharpEdgeRatio: totalPairs > 0 ? sharpEdgePairs / totalPairs : 0
+    totalSampledPixels
   };
 }
 
 /**
  * Classifies image media type based on hardware metadata, screen aspect ratios,
- * and statistical pixel properties (flat color fills, palette quantization, saturation).
+ * and statistical pixel properties (photographic micro-texture, flat color fills, palette variety).
  */
 export function detectMediaType(
   width: number,
@@ -138,8 +159,8 @@ export function detectMediaType(
   metadata: MetadataResult,
   patches: ExtractedPatch[]
 ): MediaType {
-  // 1. Definite camera photo: verified camera hardware Make/Model in EXIF
-  if (metadata.cameraModel) {
+  // 1. Definite camera photo: verified camera hardware Make/Model or authentic camera EXIF
+  if (metadata.cameraModel || (metadata.exifPresent && !metadata.aiProvenancePresent)) {
     return 'camera-photo';
   }
 
@@ -157,43 +178,50 @@ export function detectMediaType(
       Math.abs(aspect - 21 / 9) < 0.05) &&
     longEdge >= 1000;
 
-  // 2. Graphic Design / UI (extremely flat fills or minimal quantized palette)
-  if (stats.flatRatio > 0.35 || (stats.flatRatio > 0.20 && stats.uniqueColorRatio < 0.18)) {
+  // 2. Graphic Design / UI (flat vector panels, solid icons, minimal quantized palette, zero natural texture)
+  if (
+    stats.exactFlatRatio > 0.75 ||
+    (stats.exactFlatRatio > 0.50 &&
+      stats.textureRatio < 0.20 &&
+      stats.uniqueColorCount < 100 &&
+      stats.highSaturationRatio < 0.20) ||
+    (stats.exactFlatRatio > 0.40 && stats.textureRatio < 0.15 && stats.uniqueColorCount < 60)
+  ) {
+    if ((isExactScreen || isScreenAspect) && !metadata.exifPresent) {
+      return 'screen-capture';
+    }
     return 'graphic-or-ui';
   }
 
-  // 3. Exact screen resolution without camera metadata (OS, browser, app, or desktop screenshot)
-  if (isExactScreen && !metadata.exifPresent) {
-    // If cel-shaded or line-art heavy, likely a 2D drawing or graphic
-    if (stats.flatRatio > 0.18 || stats.uniqueColorRatio < 0.30) {
-      return 'digital-art';
-    }
-    return 'screen-capture';
-  }
-
-  // 4. Digital Artwork / Illustration / Graphic Design
-  // Characterized by discrete color palettes, flat cel shading, line art, or vibrant digital primaries
+  // 3. Digital 2D Cel-Shaded Artwork / Anime / Cartoon / Vector Illustration
+  // Characterized by flat cel fills, line art outlines or high digital saturation, low micro-texture, small palette
   if (
-    (stats.flatRatio > 0.08 && stats.uniqueColorRatio < 0.45) ||
-    (stats.flatRatio > 0.05 && stats.highSaturationRatio > 0.22) ||
-    (stats.sharpEdgeRatio > 0.035 && stats.uniqueColorRatio < 0.50) ||
-    stats.uniqueColorRatio < 0.28
+    (stats.exactFlatRatio > 0.35 &&
+      stats.textureRatio < 0.22 &&
+      (stats.sharpEdgeRatio > 0.04 || stats.highSaturationRatio > 0.20) &&
+      stats.uniqueColorCount < 120) ||
+    (stats.sharpEdgeRatio > 0.06 &&
+      stats.exactFlatRatio > 0.28 &&
+      stats.textureRatio < 0.22 &&
+      stats.uniqueColorCount < 150)
   ) {
     return 'digital-art';
   }
 
-  // 5. Screen Capture / Display Recording
-  // Screen aspect ratio (16:9, 16:10, 21:9) without camera hardware EXIF
-  if (isScreenAspect && !metadata.exifPresent && (stats.highSaturationRatio > 0.10 || stats.flatRatio > 0.03)) {
-    return 'screen-capture';
+  // 4. Screen Capture (exact screen resolution or screen aspect with digital UI flatness and lack of texture)
+  if ((isExactScreen || isScreenAspect) && !metadata.exifPresent) {
+    if (stats.exactFlatRatio > 0.45 && stats.textureRatio < 0.28) {
+      return 'screen-capture';
+    }
   }
 
-  // 6. Camera photograph characteristics (continuous analog sensor noise, rich color distribution)
-  if (stats.flatRatio < 0.03 && stats.uniqueColorRatio > 0.65) {
+  // 5. Photographic Capture (Natural continuous micro-texture or rich continuous palette)
+  if (stats.textureRatio >= 0.22 || stats.uniqueColorCount >= 100) {
     return 'camera-photo';
   }
 
-  return 'general-media';
+  // Fallback for natural continuous media
+  return 'camera-photo';
 }
 
 export function formatMediaTypeLabel(mediaType?: MediaType): string {
