@@ -91,6 +91,8 @@ function createImageCardElement(img: ImageSummary): HTMLElement {
       badgeLabel = 'Artwork';
     } else if (img.mediaType === 'screen-capture') {
       badgeLabel = 'Screenshot';
+    } else if (img.mediaType === 'graphic-or-ui') {
+      badgeLabel = 'Graphic';
     } else if (img.mediaType === 'camera-photo') {
       badgeLabel = 'Photo';
     } else {

@@ -85,8 +85,39 @@
   animation: cycleColors 1.2s infinite linear;
 }
 
+.detectorBadge__verdictText {
+  color: #F8FAFC;
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.detectorBadge--lowAi .detectorBadge__verdictText {
+  color: #34D399;
+}
+
+.detectorBadge--mediumAi .detectorBadge__verdictText {
+  color: #FBBF24;
+}
+
+.detectorBadge--highAi .detectorBadge__verdictText {
+  color: #F87171;
+}
+
 .detectorBadge__scoreText {
-  color: #FFFFFF;
+  color: #94A3B8;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.detectorBadge__multiAreaBadge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(100, 116, 139, 0.35);
+  color: #CBD5E1;
+  margin-left: 1px;
 }
 
 /* CSS Anchor Positioning @position-try fallbacks to keep tooltip clear of sample regions */

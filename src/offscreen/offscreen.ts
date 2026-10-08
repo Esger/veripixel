@@ -308,8 +308,8 @@ function generateForensicReasoning(
     };
   }
 
-  // 4. Uniformly Low AI Probability (Authentic non-AI media)
-  if (maxScore < 0.30) {
+  // 4. Low AI Probability across sampled regions (Authentic non-AI media)
+  if (maxScore < 0.30 || (avgScore < 0.30 && maxScore < 0.50)) {
     if (mediaType === 'digital-art') {
       return {
         type: 'likely-real',
@@ -440,12 +440,24 @@ async function processImageBlob(
 
       // Aggregate overall score
       const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
+      const minPatchScore = Math.min(...patchScores.map((p) => p.aiScore));
       const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
+      const spread = maxPatchScore - minPatchScore;
 
-      let baseScore = maxPatchScore * 0.6 + avgPatchScore * 0.4;
+      let baseScore: number;
       if (metadata.aiProvenancePresent) {
         baseScore = 0.99;
-      } else if (metadata.c2paPresent) {
+      } else if (patchScores.length > 1 && spread >= 0.40 && maxPatchScore >= 0.70) {
+        // Confirmed localized alteration (e.g. inpainting or face-swap in one specific patch)
+        baseScore = maxPatchScore * 0.5 + avgPatchScore * 0.5;
+      } else if (patchScores.length > 1) {
+        // Multi-region sample: average represents the true overall image verdict
+        baseScore = avgPatchScore;
+      } else {
+        baseScore = maxPatchScore;
+      }
+
+      if (metadata.c2paPresent && !metadata.aiProvenancePresent) {
         baseScore = Math.max(0.01, baseScore - 0.3);
       }
 

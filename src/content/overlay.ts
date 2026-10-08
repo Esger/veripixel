@@ -456,10 +456,18 @@ function triggerRegionalDeepening(targetEl: HTMLElement, entry: BadgeEntry): voi
   }
 
   try {
+    let dataUrl: string | undefined;
+    if (entry.result.imageUrl.startsWith('data:') || entry.result.imageUrl.startsWith('blob:')) {
+      dataUrl = entry.result.imageUrl;
+    } else if (targetEl instanceof HTMLImageElement && targetEl.src && (targetEl.src.startsWith('data:') || targetEl.src.startsWith('blob:'))) {
+      dataUrl = targetEl.src;
+    }
+
     chrome.runtime.sendMessage(
       {
         type: 'ANALYZE_IMAGE',
         imageUrl: entry.result.imageUrl,
+        dataUrl,
         sampleMode: 'standard',
         priority: 'high'
       },
@@ -517,6 +525,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   badgeEl.style.setProperty('position-anchor', anchorName);
   badgeEl.innerHTML = `
     <span class="detectorBadge__dot detectorBadge__dot--loading"></span>
+    <span class="detectorBadge__verdictText"></span>
     <span class="detectorBadge__scoreText">...</span>
   `;
 
@@ -659,14 +668,56 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 
   const dotEl = badgeEl.querySelector('.detectorBadge__dot') as HTMLElement | null;
   const scoreText = badgeEl.querySelector('.detectorBadge__scoreText') as HTMLElement | null;
+  let verdictTextEl = badgeEl.querySelector('.detectorBadge__verdictText') as HTMLElement | null;
 
   if (dotEl) {
     dotEl.classList.remove('detectorBadge__dot--loading');
   }
 
+  let conciseVerdict = 'Authentic';
+  if (scorePercent >= 70) {
+    conciseVerdict = 'AI Gen';
+  } else if (scorePercent >= 30) {
+    conciseVerdict = result.reasoning?.type === 'localized-edit' ? 'Edited' : 'Possible AI';
+  } else {
+    if (mediaType === 'digital-art') conciseVerdict = 'Artwork';
+    else if (mediaType === 'screen-capture') conciseVerdict = 'Screenshot';
+    else if (mediaType === 'graphic-or-ui') conciseVerdict = 'Graphic';
+    else if (mediaType === 'camera-photo') conciseVerdict = 'Photo';
+    else conciseVerdict = 'Authentic';
+  }
+
+  if (!verdictTextEl) {
+    verdictTextEl = document.createElement('span');
+    verdictTextEl.className = 'detectorBadge__verdictText';
+    if (scoreText) {
+      badgeEl.insertBefore(verdictTextEl, scoreText);
+    } else {
+      badgeEl.appendChild(verdictTextEl);
+    }
+  }
+  verdictTextEl.textContent = conciseVerdict;
+
   if (scoreText) {
     scoreText.textContent = `${scorePercent}%`;
   }
+
+  // Multi-area evaluation badge indicator (e.g. 4× or 9×)
+  const sampleCount = result.patchScores.length;
+  let multiBadgeEl = badgeEl.querySelector('.detectorBadge__multiAreaBadge') as HTMLElement | null;
+  if (sampleCount > 1) {
+    if (!multiBadgeEl) {
+      multiBadgeEl = document.createElement('span');
+      multiBadgeEl.className = 'detectorBadge__multiAreaBadge';
+      badgeEl.appendChild(multiBadgeEl);
+    }
+    multiBadgeEl.textContent = `${sampleCount}×`;
+  } else if (multiBadgeEl) {
+    multiBadgeEl.remove();
+  }
+
+  const sampleNote = sampleCount > 1 ? ` (averaged across ${sampleCount} regions)` : '';
+  badgeEl.title = `${statusText} (${scorePercent}% AI${sampleNote}) - Click to inspect forensic details`;
 
   // Create or retrieve native anchor-positioned regions wrapper & container
   hideRegionsForEntry(entry);
@@ -900,10 +951,18 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
           : `Analyzing standard samples...`;
 
       try {
+        let dataUrl: string | undefined;
+        if (result.imageUrl.startsWith('data:') || result.imageUrl.startsWith('blob:')) {
+          dataUrl = result.imageUrl;
+        } else if (targetEl instanceof HTMLImageElement && targetEl.src && (targetEl.src.startsWith('data:') || targetEl.src.startsWith('blob:'))) {
+          dataUrl = targetEl.src;
+        }
+
         chrome.runtime.sendMessage(
           {
             type: 'ANALYZE_IMAGE',
             imageUrl: result.imageUrl,
+            dataUrl,
             sampleMode: nextMode,
             forceRescan: true,
             priority: 'high'
