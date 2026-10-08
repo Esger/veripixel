@@ -144,7 +144,7 @@ async function extractImageDataUrl(el: HTMLElement): Promise<string | null> {
 }
 
 const inFlightUrls = new Set<string>();
-const MAX_CONCURRENT_PAGE_SCANS = 3;
+const MAX_CONCURRENT_PAGE_SCANS = 2; // Capped to 2 to leave CPU and IPC responsive for browser and popover
 let activeScanCount = 0;
 const pendingScanQueue: HTMLElement[] = [];
 
@@ -157,6 +157,10 @@ function enqueueElementForScan(el: HTMLElement): void {
     return;
   }
   if (!pendingScanQueue.includes(el)) {
+    // Bound queue length to 10 to prevent massive background backlogs on infinite scroll
+    if (pendingScanQueue.length >= 10) {
+      return;
+    }
     pendingScanQueue.push(el);
   }
   pumpScanQueue();
@@ -300,7 +304,8 @@ function processElement(el: HTMLElement): Promise<void> {
         chrome.runtime.sendMessage(
           {
             type: 'ANALYZE_IMAGE',
-            imageUrl: dataUrl,
+            imageUrl, // Pass original HTTP URL so ImageSummary and storage use clean URL
+            dataUrl,  // Pass extracted base64 dataUrl for inference
             priority,
             isModal: isInsideModal,
             sampleMode: 'fast'
@@ -514,9 +519,14 @@ function scanDOM(): void {
     return ra.left - rb.left;
   });
 
-  // Prioritize and immediately process visible elements in visual reading order
-  visibleElements.forEach((el) => {
+  // Prioritize and immediately process the top 6 most prominent visible elements.
+  // The rest are observed lazily via IntersectionObserver, preventing CPU and IPC flooding on infinite-scroll pages like Pinterest.
+  const MAX_IMMEDIATE_VISIBLE_SCANS = 6;
+  visibleElements.slice(0, MAX_IMMEDIATE_VISIBLE_SCANS).forEach((el) => {
     observeElement(el, true);
+  });
+  visibleElements.slice(MAX_IMMEDIATE_VISIBLE_SCANS).forEach((el) => {
+    observeElement(el, false);
   });
 
   // Observe offscreen elements for lazy scanning via IntersectionObserver
@@ -524,11 +534,6 @@ function scanDOM(): void {
     observeElement(el, false);
   });
 }
-
-const scheduleIdleTask =
-  typeof requestIdleCallback !== 'undefined'
-    ? (cb: () => void) => requestIdleCallback(cb, { timeout: 400 })
-    : (cb: () => void) => setTimeout(cb, 60);
 
 let modalCheckScheduled = false;
 function scheduleModalStateCheck(): void {
@@ -540,21 +545,17 @@ function scheduleModalStateCheck(): void {
   });
 }
 
-let scanScheduled = false;
+let scanTimer: any = null;
 function scheduleScanDOM(immediate = false): void {
-  if (!isDetectorEnabled || scanScheduled) return;
-  scanScheduled = true;
-  if (immediate) {
-    requestAnimationFrame(() => {
-      scanScheduled = false;
+  if (!isDetectorEnabled) return;
+  if (scanTimer) clearTimeout(scanTimer);
+  scanTimer = setTimeout(
+    () => {
+      scanTimer = null;
       scanDOM();
-    });
-  } else {
-    scheduleIdleTask(() => {
-      scanScheduled = false;
-      scanDOM();
-    });
-  }
+    },
+    immediate ? 80 : 350
+  );
 }
 
 function handleModalStateCheck(): void {

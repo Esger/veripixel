@@ -78,6 +78,7 @@ export type ExtensionMessage =
   | {
       type: 'ANALYZE_IMAGE';
       imageUrl: string;
+      dataUrl?: string;
       priority?: 'high' | 'normal';
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
@@ -90,6 +91,7 @@ export type ExtensionMessage =
   | {
       type: 'PROCESS_IMAGE_URL';
       imageUrl: string;
+      originalUrl?: string;
       tabId?: number;
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;

@@ -4,9 +4,125 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VeriPixel</title>
+  <style>
+    /* Explicit fixed width and height so Chrome sizes the native popup window frame immediately on first cold start */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 350px;
+      height: 480px;
+      min-width: 350px;
+      min-height: 480px;
+      max-width: 350px;
+      max-height: 580px;
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow-x: hidden;
+      overflow-y: auto;
+      box-sizing: border-box;
+    }
+    #popupRoot {
+      width: 350px;
+      min-height: 480px;
+      box-sizing: border-box;
+      padding: 16px;
+    }
+  </style>
+  <link rel="stylesheet" href="./popup.css">
 </head>
 <body>
-  <div id="root"></div>
-  <script type="module" src="./popup.tsx"></script>
+  <div class="popupView" id="popupRoot">
+    <!-- Header -->
+    <div class="popupView__header">
+      <div class="popupView__brand">
+        <div class="popupView__brandIcon" id="brandIcon">🛡️</div>
+        <div class="popupView__brandText">
+          <h2 class="popupView__title">VeriPixel</h2>
+          <span class="popupView__subtitle">Client-Side Forensics Engine</span>
+        </div>
+      </div>
+
+      <div class="popupView__headerActions">
+        <!-- Live / Paused scanning indicator badge -->
+        <div class="popupView__liveBadge" id="liveBadge">
+          <span class="popupView__liveDot" id="liveDot"></span>
+          <span id="liveText">Live</span>
+        </div>
+
+        <!-- Global On/Off toggle switch -->
+        <label
+          class="popupView__switch"
+          title="Click to toggle detection across all pages"
+        >
+          <input
+            type="checkbox"
+            class="popupView__switchInput"
+            id="enabledSwitch"
+            checked
+            aria-label="Toggle detection across all pages"
+          />
+          <span
+            class="popupView__switchSlider popupView__switchSlider--checked"
+            id="switchSlider"
+          >
+            <span class="popupView__switchThumb"></span>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Disabled Notification Banner -->
+    <div class="popupView__disabledBanner" id="disabledBanner" style="display: none;">
+      <span class="popupView__disabledBannerIcon">⏸️</span>
+      <span class="popupView__disabledBannerText">
+        Detection is paused globally across all pages.
+      </span>
+    </div>
+
+    <!-- Metrics Grid -->
+    <div class="popupView__metricsGrid">
+      <div class="popupView__metricCard">
+        <div class="popupView__metricLabel">Scanned</div>
+        <div class="popupView__metricValue" id="metricScanned">0</div>
+      </div>
+
+      <div class="popupView__metricCard popupView__metricCard--fake">
+        <div class="popupView__metricLabel">AI Fake</div>
+        <div class="popupView__metricValue" id="metricAiFake">0</div>
+      </div>
+
+      <div class="popupView__metricCard popupView__metricCard--edited">
+        <div class="popupView__metricLabel">Edited</div>
+        <div class="popupView__metricValue" id="metricEdited">0</div>
+      </div>
+
+      <div class="popupView__metricCard popupView__metricCard--real">
+        <div class="popupView__metricLabel">Real</div>
+        <div class="popupView__metricValue" id="metricReal">0</div>
+      </div>
+    </div>
+
+    <!-- Scanned Images Feed -->
+    <div class="popupView__feedSection">
+      <div class="popupView__feedHeader">
+        <span>DETECTED ON THIS TAB</span>
+        <span id="feedCount">0 images</span>
+      </div>
+
+      <div class="popupView__emptyState" id="emptyState">
+        Waiting for page scan...
+      </div>
+
+      <div class="popupView__imageList" id="imageList" style="display: none;"></div>
+    </div>
+
+    <!-- Action Footer -->
+    <button class="popupView__rescanBtn" id="rescanBtn">
+      <span>🔄</span> Re-scan Current Page
+    </button>
+  </div>
+
+  <script type="module" src="./popup.ts"></script>
 </body>
 </html>

@@ -419,6 +419,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     )
       .then((result) => {
         if (result) {
+          if (message.originalUrl) {
+            result.imageUrl = message.originalUrl;
+          }
           sendResponse({ result });
         } else {
           sendResponse({ cancelled: true });
