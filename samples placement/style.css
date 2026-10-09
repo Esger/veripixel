@@ -1,0 +1,201 @@
+:root {
+    --bgColor: #0B0F17;
+    --textColor: #F8FAFC;
+    --sampleSize: 240px;
+    --sampleBorderColor: #10B981;
+    --sampleBgColor: rgba(16, 185, 129, 0.15);
+    --sampleGlowColor: rgba(16, 185, 129, 0.4);
+    --sampleInsetGlowColor: rgba(16, 185, 129, 0.2);
+    --gridLineColor: rgba(255, 255, 255, 0.176);
+    --gridCenterLineColor: rgba(56, 189, 248, 0.55);
+    --imageBorderColor: rgba(255, 255, 255, 0.1);
+    --imageShadowColor: rgba(0, 0, 0, 0.65);
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    position: relative;
+    background-color: var(--bgColor);
+    color: var(--textColor);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow: hidden;
+}
+
+/* Image centered at 800x600, position absolute */
+.targetImage {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    object-fit: cover;
+    border-radius: 8px;
+    box-shadow: 0 25px 50px -12px var(--imageShadowColor), 0 0 0 1px var(--imageBorderColor);
+    display: block;
+    user-select: none;
+
+    /* Modern CSS Anchor definition */
+    anchor-name: --targetImage;
+}
+
+/* Samples overlay anchored to the image with grid lines at 1/3, 1/2, 2/3 */
+.samples {
+    position: absolute;
+    container-name: --samplesContainer;
+    container-type: size;
+    position-anchor: --targetImage;
+    top: anchor(top);
+    right: anchor(right);
+    bottom: anchor(bottom);
+    left: anchor(left);
+    pointer-events: none;
+
+    background-image:
+        /* Vertical guidelines */
+        linear-gradient(to right,
+            transparent calc(100% / 3 - 0.5px),
+            var(--gridLineColor) calc(100% / 3 - 0.5px),
+            var(--gridLineColor) calc(100% / 3 + 0.5px),
+            transparent calc(100% / 3 + 0.5px),
+            transparent calc(50% - 0.5px),
+            var(--gridCenterLineColor) calc(50% - 0.5px),
+            var(--gridCenterLineColor) calc(50% + 0.5px),
+            transparent calc(50% + 0.5px),
+            transparent calc(100% * 2 / 3 - 0.5px),
+            var(--gridLineColor) calc(100% * 2 / 3 - 0.5px),
+            var(--gridLineColor) calc(100% * 2 / 3 + 0.5px),
+            transparent calc(100% * 2 / 3 + 0.5px)),
+        /* Horizontal guidelines */
+        linear-gradient(to bottom,
+            transparent calc(100% / 3 - 0.5px),
+            var(--gridLineColor) calc(100% / 3 - 0.5px),
+            var(--gridLineColor) calc(100% / 3 + 0.5px),
+            transparent calc(100% / 3 + 0.5px),
+            transparent calc(50% - 0.5px),
+            var(--gridCenterLineColor) calc(50% - 0.5px),
+            var(--gridCenterLineColor) calc(50% + 0.5px),
+            transparent calc(50% + 0.5px),
+            transparent calc(100% * 2 / 3 - 0.5px),
+            var(--gridLineColor) calc(100% * 2 / 3 - 0.5px),
+            var(--gridLineColor) calc(100% * 2 / 3 + 0.5px),
+            transparent calc(100% * 2 / 3 + 0.5px));
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.samples__wrapper {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    height: calc(33.333cqh + 2 * var(--sampleSize));
+    min-height: calc(3 * var(--sampleSize));
+    margin-block: auto;
+}
+
+.samples__top,
+.samples__middle,
+.samples__bottom {
+    margin-inline: auto;
+    width: calc(33.333cqw + var(--sampleSize));
+    min-width: calc(3 * var(--sampleSize));
+    display: flex;
+    justify-content: space-between;
+}
+
+.samples__top {
+    align-items: flex-end;
+
+    .sample__center {
+        margin-bottom: calc(var(--sampleSize) / 2);
+    }
+}
+
+.samples__bottom {
+    .sample__center {
+        margin-top: calc(var(--sampleSize) / 2);
+    }
+}
+
+
+.samples__middle {
+    width: calc(33.333cqw + 2 * var(--sampleSize));
+    max-width: 100cqw;
+
+    /* .sample__left {
+        margin-left: calc(-.5 * var(--sampleSize));
+    }
+
+    .sample__right {
+        margin-right: calc(-.5 * var(--sampleSize));
+    } */
+}
+
+
+/* Hide middle samples when container is smaller than 3 samples wide */
+@container --samplesContainer (height < 720px) {
+    .samples__wrapper {
+        min-height: calc(2 * var(--sampleSize));
+    }
+
+    .samples__middle {
+        display: none;
+    }
+}
+
+@container --samplesContainer (height < 480px) {
+    .samples__wrapper {
+        min-height: var(--sampleSize);
+        height: var(--sampleSize);
+    }
+
+    .samples__top {
+        display: none;
+    }
+}
+
+@container --samplesContainer (width < 720px) {
+
+    .samples__top,
+    .samples__middle,
+    .samples__bottom {
+        min-width: calc(2 * var(--sampleSize));
+    }
+
+    .sample__center {
+        display: none;
+    }
+}
+
+@container --samplesContainer (width < 480px) {
+
+    .samples__top,
+    .samples__middle,
+    .samples__bottom {
+        min-width: var(--sampleSize);
+        width: var(--sampleSize);
+    }
+
+    .sample__left {
+        display: none;
+    }
+}
+
+
+/* Sample patch styling */
+.sample__target {
+    width: var(--sampleSize, 80px);
+    height: var(--sampleSize, 80px);
+    border-radius: 6px;
+    border: 2px dashed var(--sampleBorderColor);
+    background-color: var(--sampleBgColor);
+    box-shadow: 0 0 16px var(--sampleGlowColor), inset 0 0 8px var(--sampleInsetGlowColor);
+    pointer-events: auto;
+}
