@@ -1,4 +1,4 @@
-import { AnalysisResult, PatchResult } from '../shared/types';
+import { AnalysisResult, PatchResult, System1Result } from '../shared/types';
 
 interface BadgeEntry {
   badgeEl: HTMLElement;
@@ -610,6 +610,60 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   updateBadgePosition(targetEl, activeModals);
 }
 
+export function updateBadgePreliminary(targetEl: HTMLElement, _system1?: System1Result): void {
+  if (!isOverlayActive) return;
+
+  // If final analysis has already completed, do not overwrite with preliminary state
+  if (targetEl.dataset.aiDetectorBadgeInjected === 'true') {
+    return;
+  }
+
+  // Ensure loading badge is created if not already present
+  if (!targetEl.dataset.aiDetectorBadgeInjected) {
+    injectLoadingBadge(targetEl);
+  }
+  targetEl.dataset.aiDetectorBadgeInjected = 'preliminary';
+
+  const entry = badgeRegistry.get(targetEl);
+  if (!entry) return;
+
+  const { badgeEl, tooltipEl } = entry;
+
+  badgeEl.classList.remove('detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
+  badgeEl.classList.add('detectorBadge--preliminary');
+
+  let verdictTextEl = badgeEl.querySelector('.detectorBadge__verdictText') as HTMLElement | null;
+  const scoreText = badgeEl.querySelector('.detectorBadge__scoreText') as HTMLElement | null;
+
+  if (!verdictTextEl) {
+    verdictTextEl = document.createElement('span');
+    verdictTextEl.className = 'detectorBadge__verdictText';
+    if (scoreText) {
+      badgeEl.insertBefore(verdictTextEl, scoreText);
+    } else {
+      badgeEl.appendChild(verdictTextEl);
+    }
+  }
+  verdictTextEl.textContent = 'Scanning';
+
+  if (scoreText) {
+    scoreText.textContent = '...';
+  }
+
+  badgeEl.title = 'Running authenticity scan...';
+
+  tooltipEl.innerHTML = `
+    <div class="detectorTooltip__preliminary">
+      <div class="detectorTooltip__preliminaryHeader">Authenticity Analysis</div>
+      <div class="detectorTooltip__preliminarySummary">Preliminary properties verified. Running deep scan...</div>
+      <div class="detectorTooltip__preliminaryStatus">
+        <span class="detectorBadge__dot detectorBadge__dot--loading"></span>
+        Running neural authenticity scan...
+      </div>
+    </div>
+  `;
+}
+
 export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
   if (!isOverlayActive) {
     removeBadge(targetEl);
@@ -646,7 +700,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   }
 
   const scorePercent = Math.round(result.aiScore * 100);
-  const mediaType = result.mediaType || result.reasoning?.mediaType;
   let statusModifier = 'lowAi';
   let statusText = 'Likely Authentic';
 
@@ -655,24 +708,12 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     statusText = 'High AI Probability';
   } else if (scorePercent >= 30) {
     statusModifier = 'mediumAi';
-    statusText = 'Possible AI/Edited';
+    statusText = result.reasoning?.type === 'localized-edit' ? 'Localized AI Alteration' : 'Possible AI/Edited';
   } else {
-    if (mediaType === 'pen-ink-art') {
-      statusText = 'Authentic Drawing';
-    } else if (mediaType === 'digital-art') {
-      statusText = 'Authentic Artwork';
-    } else if (mediaType === 'screen-capture') {
-      statusText = 'Authentic Screenshot';
-    } else if (mediaType === 'graphic-or-ui') {
-      statusText = 'Authentic Graphic';
-    } else if (mediaType === 'camera-photo') {
-      statusText = 'Authentic Photo';
-    } else {
-      statusText = 'Likely Authentic';
-    }
+    statusText = 'Likely Authentic';
   }
 
-  badgeEl.classList.remove('detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
+  badgeEl.classList.remove('detectorBadge--preliminary', 'detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
   badgeEl.classList.add(`detectorBadge--${statusModifier}`);
 
   const dotEl = badgeEl.querySelector('.detectorBadge__dot') as HTMLElement | null;
@@ -689,12 +730,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   } else if (scorePercent >= 30) {
     conciseVerdict = result.reasoning?.type === 'localized-edit' ? 'Edited' : 'Possible AI';
   } else {
-    if (mediaType === 'pen-ink-art') conciseVerdict = 'Drawing';
-    else if (mediaType === 'digital-art') conciseVerdict = 'Artwork';
-    else if (mediaType === 'screen-capture') conciseVerdict = 'Screenshot';
-    else if (mediaType === 'graphic-or-ui') conciseVerdict = 'Graphic';
-    else if (mediaType === 'camera-photo') conciseVerdict = 'Photo';
-    else conciseVerdict = 'Authentic';
+    conciseVerdict = 'Authentic';
   }
 
   if (!verdictTextEl) {
@@ -865,17 +901,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     if (result.reasoning.type === 'localized-edit') icon = '🎭';
     else if (result.reasoning.type === 'full-synthetic') icon = '🤖';
     else if (result.reasoning.type === 'likely-real') {
-      if (mediaType === 'pen-ink-art') icon = '✒️';
-      else if (mediaType === 'digital-art') icon = '🎨';
-      else if (mediaType === 'screen-capture') icon = '🖥️';
-      else if (mediaType === 'graphic-or-ui') icon = '📐';
-      else if (result.metadata.c2paPresent) icon = '🛡️';
-      else icon = '📸';
+      icon = result.metadata.c2paPresent ? '🛡️' : '📸';
     } else if (result.reasoning.type === 'ambiguous') {
-      if (mediaType === 'pen-ink-art') icon = '✒️';
-      else if (mediaType === 'screen-capture') icon = '🖥️';
-      else if (mediaType === 'digital-art') icon = '🎨';
-      else icon = '🔍';
+      icon = '🔍';
     }
 
     assessmentHtml = `
@@ -889,33 +917,16 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     `;
   }
 
-  const isDigitalNonCamera =
-    mediaType === 'digital-art' || mediaType === 'screen-capture' || mediaType === 'graphic-or-ui';
   const cameraDisplayVal =
     result.metadata.cameraModel ||
     (result.metadata.exifPresent
       ? 'Present'
-      : mediaType === 'pen-ink-art'
-      ? 'Physical Drawing Scan'
-      : isDigitalNonCamera
-      ? 'N/A (Digital Source)'
       : 'None/Stripped');
-
-  let mediaTypeLabel = 'Digital Media';
-  if (mediaType === 'pen-ink-art') mediaTypeLabel = 'Hand-Drawn Artwork / Sketch';
-  else if (mediaType === 'digital-art') mediaTypeLabel = 'Digital Art / Illustration';
-  else if (mediaType === 'screen-capture') mediaTypeLabel = 'Screen Capture / Screenshot';
-  else if (mediaType === 'graphic-or-ui') mediaTypeLabel = 'Graphic Design / UI';
-  else if (mediaType === 'camera-photo') mediaTypeLabel = 'Camera Photograph';
 
   tooltipEl.innerHTML = `
     <div class="detectorTooltip__header detectorTooltip__header--${statusModifier}">
       <span>${statusText}</span>
       <span>${scorePercent}% AI</span>
-    </div>
-    <div class="detectorTooltip__row">
-      <span>Media Type:</span>
-      <span class="detectorTooltip__val">${mediaTypeLabel}</span>
     </div>
     <div class="detectorTooltip__row">
       <span>EXIF Camera:</span>

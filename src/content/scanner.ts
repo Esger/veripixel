@@ -1,6 +1,7 @@
 import {
   injectLoadingBadge,
   injectImageBadge,
+  updateBadgePreliminary,
   removeBadge,
   removeAllBadges,
   updateBadgePosition,
@@ -1025,6 +1026,19 @@ document.addEventListener('visibilitychange', () => {
 chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
   if (message.type === 'GLOBAL_STATE_CHANGED') {
     setDetectorEnabledState(Boolean(message.enabled));
+    return;
+  }
+
+  if (message.type === 'IMAGE_PRELIMINARY_RESULT') {
+    if (!isDetectorEnabled) return;
+    const targetUrl = message.imageUrl;
+    const allImages = document.querySelectorAll<HTMLElement>('img, [style*="background"]');
+    for (const el of allImages) {
+      if (getElementImageUrl(el) === targetUrl) {
+        updateBadgePreliminary(el, message.system1);
+        break;
+      }
+    }
     return;
   }
 

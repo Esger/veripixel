@@ -66,6 +66,14 @@
   box-shadow: 0 0 6px #EF4444;
 }
 
+.detectorBadge--preliminary {
+  border-color: #38BDF8;
+}
+.detectorBadge--preliminary .detectorBadge__dot {
+  background-color: #38BDF8;
+  box-shadow: 0 0 6px #38BDF8;
+}
+
 .detectorBadge--modalHidden {
   display: none !important;
   visibility: hidden !important;
@@ -102,6 +110,10 @@
 
 .detectorBadge--highAi .detectorBadge__verdictText {
   color: #F87171;
+}
+
+.detectorBadge--preliminary .detectorBadge__verdictText {
+  color: #38BDF8;
 }
 
 .detectorBadge__scoreText {
@@ -212,6 +224,35 @@
 .detectorTooltip__loading {
   font-weight: 600;
   color: #94A3B8;
+}
+
+.detectorTooltip__preliminary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.detectorTooltip__preliminaryHeader {
+  font-weight: 700;
+  color: #38BDF8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+
+.detectorTooltip__preliminarySummary {
+  color: #E2E8F0;
+  line-height: 1.4;
+}
+
+.detectorTooltip__preliminaryStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #94A3B8;
+  font-size: 10px;
+  margin-top: 4px;
 }
 
 .detectorTooltip__row {
