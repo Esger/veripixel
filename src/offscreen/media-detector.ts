@@ -1,7 +1,13 @@
 import { MediaType, MetadataResult } from '../shared/types';
 import { ExtractedPatch } from './patch-extractor';
 
-interface PixelStats {
+export interface PatchPeriodicityResult {
+  hasRepetitivePattern: boolean;
+  patternPeriodicity: number;
+  patternType?: 'grid' | 'horizontal-bands' | 'vertical-bands';
+}
+
+export interface PixelStats {
   exactFlatRatio: number;
   subtleFlatRatio: number;
   textureRatio: number;
@@ -13,6 +19,9 @@ interface PixelStats {
   paperRatio: number;
   inkRatio: number;
   isPenAndInk: boolean;
+  hasRepetitivePattern: boolean;
+  patternPatchRatio: number;
+  maxPatternPeriodicity: number;
   totalSampledPixels: number;
 }
 
@@ -40,7 +49,127 @@ function isExactScreenResolution(width: number, height: number): boolean {
   );
 }
 
-function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
+/**
+ * Analyzes pixel data for physical repetitive patterns (masonry/brickwork, building stories/window grids,
+ * woven cloth/textiles, tiles, and architectural grids).
+ *
+ * Real physical grids generate strong periodic autocorrelation peaks in 1D scanline projections
+ * at discrete lags (4 - 50 px).
+ */
+export function detectDataPeriodicity(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): PatchPeriodicityResult {
+  if (width < 32 || height < 32) {
+    return { hasRepetitivePattern: false, patternPeriodicity: 0 };
+  }
+
+  // 1. Compute 1D luminance profile projections along rows and columns
+  const rowLum = new Float32Array(height);
+  const colLum = new Float32Array(width);
+
+  for (let y = 0; y < height; y++) {
+    let sum = 0;
+    const rowOffset = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      const idx = rowOffset + x * 4;
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      sum += lum;
+      colLum[x] += lum;
+    }
+    rowLum[y] = sum / width;
+  }
+  for (let x = 0; x < width; x++) {
+    colLum[x] /= height;
+  }
+
+  // 2. Measure normalized autocorrelation peaks for spatial lags 4 to 50
+  function getAutoCorrPeak(signal: Float32Array): { maxCorr: number; bestLag: number } {
+    const N = signal.length;
+    let mean = 0;
+    for (let i = 0; i < N; i++) mean += signal[i];
+    mean /= N;
+
+    let variance = 0;
+    for (let i = 0; i < N; i++) {
+      const d = signal[i] - mean;
+      variance += d * d;
+    }
+    variance /= N;
+
+    // Reject flat or extremely low-contrast regions (skies, flat color)
+    if (variance < 6.0) {
+      return { maxCorr: 0, bestLag: 0 };
+    }
+
+    const maxLag = Math.min(50, Math.floor(N / 2));
+    const corrs: number[] = new Array(maxLag + 1).fill(0);
+    for (let lag = 4; lag <= maxLag; lag++) {
+      let cov = 0;
+      let count = 0;
+      for (let i = 0; i < N - lag; i++) {
+        cov += (signal[i] - mean) * (signal[i + lag] - mean);
+        count++;
+      }
+      corrs[lag] = cov / (count * variance);
+    }
+
+    let maxCorr = -1;
+    let bestLag = 0;
+    for (let lag = 5; lag < maxLag; lag++) {
+      const c = corrs[lag];
+      const prev = corrs[lag - 1];
+      const next = corrs[lag + 1];
+      // A genuine periodic peak is a local maximum distinct from neighboring lags
+      if (c > prev && c > next && c > 0.35) {
+        if (c > maxCorr) {
+          maxCorr = c;
+          bestLag = lag;
+        }
+      }
+    }
+
+    return { maxCorr: Math.max(0, maxCorr), bestLag };
+  }
+
+  const rowPeak = getAutoCorrPeak(rowLum);
+  const colPeak = getAutoCorrPeak(colLum);
+
+  // Periodic grid: bricks, tile grids, plaid cloth, window matrices
+  const hasGrid = rowPeak.maxCorr > 0.32 && colPeak.maxCorr > 0.32;
+  // Horizontal bands: building stories, horizontal mortar, horizontal stripes
+  const hasHorizontal = rowPeak.maxCorr > 0.40;
+  // Vertical bands: vertical window mullions, siding, vertical fabric stripes
+  const hasVertical = colPeak.maxCorr > 0.40;
+
+  const hasRepetitivePattern = hasGrid || hasHorizontal || hasVertical;
+  const patternPeriodicity = Math.max(rowPeak.maxCorr, colPeak.maxCorr);
+  const patternType = hasGrid
+    ? 'grid'
+    : hasHorizontal
+      ? 'horizontal-bands'
+      : hasVertical
+        ? 'vertical-bands'
+        : undefined;
+
+  return {
+    hasRepetitivePattern,
+    patternPeriodicity: parseFloat(patternPeriodicity.toFixed(3)),
+    patternType
+  };
+}
+
+export function detectPatchPeriodicity(canvas: HTMLCanvasElement): PatchPeriodicityResult {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    return { hasRepetitivePattern: false, patternPeriodicity: 0 };
+  }
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return detectDataPeriodicity(imgData.data, canvas.width, canvas.height);
+}
+
+export function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
   if (patches.length === 0) {
     return {
       exactFlatRatio: 0,
@@ -54,6 +183,9 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
       paperRatio: 0,
       inkRatio: 0,
       isPenAndInk: false,
+      hasRepetitivePattern: false,
+      patternPatchRatio: 0,
+      maxPatternPeriodicity: 0,
       totalSampledPixels: 0
     };
   }
@@ -72,6 +204,9 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
   let paperLumPixels = 0; // > 165
   let inkLumPixels = 0;   // < 95
 
+  let patternPatchesCount = 0;
+  let maxPatternPeriodicity = 0;
+
   const uniqueColorBins = new Set<number>();
 
   for (const patch of patchesToSample) {
@@ -82,6 +217,15 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
     const data = imgData.data;
     const w = patch.canvas.width;
     const h = patch.canvas.height;
+
+    // Detect physical repetitive patterns (masonry, window grids, cloth weave/patterns)
+    const periodicity = detectDataPeriodicity(data, w, h);
+    if (periodicity.hasRepetitivePattern) {
+      patternPatchesCount++;
+      if (periodicity.patternPeriodicity > maxPatternPeriodicity) {
+        maxPatternPeriodicity = periodicity.patternPeriodicity;
+      }
+    }
 
     // 1. Horizontal neighbor differences (exact flat, subtle flat, micro-texture, and sharp edges)
     // Sample every 2nd row to remain lightning-fast (<1ms)
@@ -150,7 +294,9 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
 
       // Relative luminance
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (lum > 165) {
+      // Real paper substrate must be bright (lum > 165) AND low-saturation (sat < 0.18: white, cream, parchment)
+      // This prevents high-saturation daylight skies, sunshine, or colorful clothes from being counted as paper
+      if (lum > 165 && sat < 0.18) {
         paperLumPixels++;
       } else if (lum < 95) {
         inkLumPixels++;
@@ -166,6 +312,9 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
   const paperRatio = totalSampledPixels > 0 ? paperLumPixels / totalSampledPixels : 0;
   const inkRatio = totalSampledPixels > 0 ? inkLumPixels / totalSampledPixels : 0;
 
+  const patternPatchRatio = patchesToSample.length > 0 ? patternPatchesCount / patchesToSample.length : 0;
+  const hasRepetitivePattern = patternPatchesCount > 0;
+
   // Hand-drawn artwork, sketches, pen & ink, or colored marker/pencil drawings on physical paper:
   // Real paper has analog surface grain (textureRatio > 0.25) and is not digitally dead-flat (exactFlatRatio < 0.25).
   // Real drawings have manual stroke boundaries (sharpEdgeRatio > 0.012).
@@ -174,20 +323,26 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
     exactFlatRatio < 0.25 &&
     sharpEdgeRatio > 0.012;
 
+  // Drawings have constrained palette size (paper + discrete drawing instruments)
+  // whereas photographs have hundreds to thousands of continuous chromatic hues across nature/lighting
+  const isConstrainedDrawingPalette = uniqueColorBins.size < 280;
+
   // Case 1: Monochrome / Ballpoint Pen & Ink / Pencil / Charcoal
   // High desaturation, bimodal paper and ink luminance
   const isMonochromeDrawing =
-    lowSaturationRatio > 0.60 &&
-    paperRatio + inkRatio > 0.68 &&
-    inkRatio > 0.05 &&
-    paperRatio > 0.20;
+    lowSaturationRatio > 0.55 &&
+    paperRatio + inkRatio > 0.55 &&
+    inkRatio > 0.04 &&
+    paperRatio > 0.18 &&
+    isConstrainedDrawingPalette;
 
-  // Case 2: Colored Sketch / Marker Art / Felt-Tip Pens / Colored Pencils / Pastels on Paper
+  // Case 2: Colored Sketch / Marker Art / Felt-Tip Pens / Colored Pencils on Paper
   // Substantial paper substrate visible behind the drawing, line strokes and colored/dark marks
   const isColoredDrawing =
     paperRatio > 0.22 &&
-    inkRatio > 0.08 &&
-    paperRatio + inkRatio > 0.55;
+    inkRatio > 0.06 &&
+    paperRatio + inkRatio > 0.40 &&
+    isConstrainedDrawingPalette;
 
   const isPenAndInk = hasPaperTextureAndStrokes && (isMonochromeDrawing || isColoredDrawing);
 
@@ -203,6 +358,9 @@ function analyzeCanvasPixels(patches: ExtractedPatch[]): PixelStats {
     paperRatio,
     inkRatio,
     isPenAndInk,
+    hasRepetitivePattern,
+    patternPatchRatio,
+    maxPatternPeriodicity,
     totalSampledPixels
   };
 }
@@ -219,15 +377,15 @@ export function detectMediaType(
 ): MediaType {
   const stats = analyzeCanvasPixels(patches);
 
-  // 1. Hand-drawn sketch / pen & ink drawing on physical paper
-  // Prioritized to prevent camera-trained diffusion models from misclassifying manual cross-hatching
-  if (stats.isPenAndInk) {
-    return 'pen-ink-art';
-  }
-
-  // 2. Definite camera photo: verified camera hardware Make/Model or authentic camera EXIF
+  // 1. Definite camera photo: verified camera hardware Make/Model or authentic camera EXIF
+  // Priority #1: If hardware camera EXIF exists, never misclassify as a sketch or digital art!
   if (metadata.cameraModel || (metadata.exifPresent && !metadata.aiProvenancePresent)) {
     return 'camera-photo';
+  }
+
+  // 2. Hand-drawn sketch / pen & ink drawing on physical paper
+  if (stats.isPenAndInk) {
+    return 'pen-ink-art';
   }
 
   const isExactScreen = isExactScreenResolution(width, height);
@@ -258,19 +416,23 @@ export function detectMediaType(
     return 'graphic-or-ui';
   }
 
-  // 4. Digital 2D Cel-Shaded Artwork / Anime / Cartoon / Vector Illustration
-  // Characterized by flat cel fills, line art outlines or high digital saturation, low micro-texture, small palette
-  if (
-    (stats.exactFlatRatio > 0.35 &&
-      stats.textureRatio < 0.22 &&
-      (stats.sharpEdgeRatio > 0.04 || stats.highSaturationRatio > 0.20) &&
-      stats.uniqueColorCount < 120) ||
-    (stats.sharpEdgeRatio > 0.06 &&
-      stats.exactFlatRatio > 0.28 &&
-      stats.textureRatio < 0.22 &&
-      stats.uniqueColorCount < 150)
-  ) {
-    return 'digital-art';
+  // 4. Artwork / Painting / Illustration (Oil, acrylic, watercolor, digital painting, cel-shaded art)
+  // Non-camera continuous media characterized by artistic pigment saturation, painterly brush edges, or palette clustering
+  if (!stats.hasRepetitivePattern) {
+    if (
+      // Cel-shaded / 2D illustration / Anime
+      (stats.exactFlatRatio > 0.25 &&
+        stats.textureRatio < 0.22 &&
+        (stats.sharpEdgeRatio > 0.03 || stats.highSaturationRatio > 0.18)) ||
+      // Traditional & digital paintings: rich artistic pigment saturation with painterly stroke boundaries
+      (stats.highSaturationRatio > 0.18 && stats.sharpEdgeRatio > 0.020 && stats.uniqueColorCount < 400) ||
+      // Stylized digital art / watercolor / pastel with vivid palette
+      (stats.highSaturationRatio > 0.25 && stats.uniqueColorCount < 350) ||
+      // Artworks with visible stroke boundaries and non-photographic flat blending
+      (stats.sharpEdgeRatio > 0.040 && stats.exactFlatRatio > 0.15)
+    ) {
+      return 'digital-art';
+    }
   }
 
   // 5. Screen Capture (exact screen resolution or screen aspect with digital UI flatness and lack of texture)
@@ -280,8 +442,8 @@ export function detectMediaType(
     }
   }
 
-  // 6. Photographic Capture (Natural continuous micro-texture or rich continuous palette)
-  if (stats.textureRatio >= 0.22 || stats.uniqueColorCount >= 100) {
+  // 6. Photographic Capture (Natural continuous micro-texture, rich palette, or physical repetitive pattern)
+  if (stats.textureRatio >= 0.22 || stats.uniqueColorCount >= 100 || stats.hasRepetitivePattern) {
     return 'camera-photo';
   }
 
@@ -294,7 +456,7 @@ export function formatMediaTypeLabel(mediaType?: MediaType): string {
     case 'pen-ink-art':
       return 'Hand-Drawn Artwork / Sketch';
     case 'digital-art':
-      return 'Digital Artwork / Illustration';
+      return 'Artwork / Painting / Illustration';
     case 'screen-capture':
       return 'Screen Capture / Screenshot';
     case 'graphic-or-ui':

@@ -14,6 +14,8 @@ export interface PatchResult {
   position: PatchPosition;
   aiScore: number;
   box?: PatchBox;
+  hasPattern?: boolean;
+  patternPeriodicity?: number;
 }
 
 export interface MetadataResult {
