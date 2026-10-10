@@ -96,7 +96,8 @@ body {
     justify-content: space-between;
     align-items: center;
     height: calc(33.333cqh + 2 * var(--sampleSize));
-    min-height: calc(3 * var(--sampleSize));
+    max-height: 100cqh;
+    min-height: min(calc(4 * var(--sampleSize)), 100cqh);
     margin-block: auto;
 }
 
@@ -105,7 +106,8 @@ body {
 .samples__bottom {
     margin-inline: auto;
     width: calc(33.333cqw + var(--sampleSize));
-    min-width: calc(3 * var(--sampleSize));
+    min-width: min(calc(3 * var(--sampleSize)), 100cqw);
+    max-width: 100cqw;
     display: flex;
     justify-content: space-between;
 }
@@ -124,25 +126,17 @@ body {
     }
 }
 
-
 .samples__middle {
     width: calc(33.333cqw + 2 * var(--sampleSize));
     max-width: 100cqw;
-
-    /* .sample__left {
-        margin-left: calc(-.5 * var(--sampleSize));
-    }
-
-    .sample__right {
-        margin-right: calc(-.5 * var(--sampleSize));
-    } */
 }
 
-
-/* Hide middle samples when container is smaller than 3 samples wide */
-@container --samplesContainer (height < 720px) {
+/* Hide middle samples when vertical space is constrained to prevent overlap */
+@container --samplesContainer (height < 960px) {
     .samples__wrapper {
-        min-height: calc(2 * var(--sampleSize));
+        height: calc(33.333cqh + var(--sampleSize));
+        min-height: min(calc(3 * var(--sampleSize)), 100cqh);
+        max-height: 100cqh;
     }
 
     .samples__middle {
@@ -150,23 +144,35 @@ body {
     }
 }
 
-@container --samplesContainer (height < 480px) {
+@container --samplesContainer (height < 720px) {
     .samples__wrapper {
-        min-height: var(--sampleSize);
+        min-height: min(var(--sampleSize), 100cqh);
         height: var(--sampleSize);
+        max-height: 100cqh;
     }
 
     .samples__top {
         display: none;
     }
+
+    .samples__bottom .sample__center {
+        margin-top: 0;
+    }
+}
+
+/* Hide center/left samples when horizontal space is constrained to prevent overlap */
+@container --samplesContainer (width < 960px) {
+    .samples__middle {
+        width: calc(33.333cqw + var(--sampleSize));
+    }
 }
 
 @container --samplesContainer (width < 720px) {
-
     .samples__top,
     .samples__middle,
     .samples__bottom {
         min-width: calc(2 * var(--sampleSize));
+        width: calc(33.333cqw + var(--sampleSize));
     }
 
     .sample__center {
@@ -175,7 +181,6 @@ body {
 }
 
 @container --samplesContainer (width < 480px) {
-
     .samples__top,
     .samples__middle,
     .samples__bottom {
@@ -193,6 +198,8 @@ body {
 .sample__target {
     width: var(--sampleSize, 80px);
     height: var(--sampleSize, 80px);
+    max-width: 100cqw;
+    max-height: 100cqh;
     border-radius: 6px;
     border: 2px dashed var(--sampleBorderColor);
     background-color: var(--sampleBgColor);
