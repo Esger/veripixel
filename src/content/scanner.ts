@@ -9,7 +9,8 @@ import {
   getActiveModalElements,
   isElementInsideActiveModal,
   isDetectorElement,
-  setOverlayEnabled
+  setOverlayEnabled,
+  getElementSampleBoxes
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
@@ -414,6 +415,8 @@ function processElement(el: HTMLElement): Promise<void> {
 
     const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
 
+    const measured = getElementSampleBoxes(el);
+
     const sendDataUrlAnalysis = async () => {
       if (!isDetectorEnabled) {
         inFlightUrls.delete(imageUrl);
@@ -438,7 +441,8 @@ function processElement(el: HTMLElement): Promise<void> {
             dataUrl,  // Pass extracted base64 dataUrl for inference
             priority,
             isModal: isInsideModal,
-            sampleMode: 'fast'
+            sampleMode: 'fast',
+            sampleBoxes: [measured.centerBox]
           } as ExtensionMessage,
           (response) => {
             inFlightUrls.delete(imageUrl);
@@ -498,7 +502,8 @@ function processElement(el: HTMLElement): Promise<void> {
           imageUrl,
           priority,
           isModal: isInsideModal,
-          sampleMode: 'fast'
+          sampleMode: 'fast',
+          sampleBoxes: [measured.centerBox]
         } as ExtensionMessage,
         async (response) => {
           inFlightUrls.delete(imageUrl);

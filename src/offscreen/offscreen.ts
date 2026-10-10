@@ -257,10 +257,11 @@ async function processImageBlob(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
-  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid)
-  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid, or directly from provided sampleBoxes)
+  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode, sampleBoxes);
 
   // 2. Extract EXIF / Metadata
   const metadata = await extractMetadata(blob);
@@ -424,11 +425,12 @@ async function processImageBuffer(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
   const uint8Array = new Uint8Array(buffer);
   const blob = new Blob([uint8Array], { type: contentType });
-  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode, sampleBoxes);
 }
 
 // Process an incoming image URL directly in offscreen without IPC serialization overhead
@@ -437,7 +439,8 @@ async function processImageUrl(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
@@ -460,7 +463,7 @@ async function processImageUrl(
     clearTimeout(timeoutId);
   }
 
-  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode, sampleBoxes);
 }
 
 // Listen for background service worker requests
@@ -482,7 +485,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.tabId,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleMode || 'standard'
+      message.sampleMode || 'standard',
+      message.sampleBoxes
     )
       .then((result) => {
         if (result) {
@@ -506,7 +510,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.tabId,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleMode || 'standard'
+      message.sampleMode || 'standard',
+      message.sampleBoxes
     )
       .then((result) => {
         if (result) {

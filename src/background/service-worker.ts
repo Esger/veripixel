@@ -400,6 +400,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       const isModal = message.isModal || false;
       const requestedSampleMode = message.sampleMode || 'standard';
       const forceRescan = message.forceRescan || false;
+      const sampleBoxes = 'sampleBoxes' in message ? message.sampleBoxes : undefined;
 
       if (tabId !== undefined) {
         chrome.storage.session.set({ activeTabId: tabId }).catch(() => {});
@@ -486,7 +487,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 tabId,
                 priority: effectivePriority,
                 isModal,
-                sampleMode: requestedSampleMode
+                sampleMode: requestedSampleMode,
+                sampleBoxes
               }
             : {
                 type: 'PROCESS_IMAGE_URL',
@@ -495,7 +497,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 tabId,
                 priority: effectivePriority,
                 isModal,
-                sampleMode: requestedSampleMode
+                sampleMode: requestedSampleMode,
+                sampleBoxes
               };
 
         let responseHandled = false;

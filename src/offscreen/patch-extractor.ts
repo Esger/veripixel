@@ -92,7 +92,8 @@ export function calculateSampleLayout(
 export async function extractRuleOfThirdsPatches(
   blob: Blob,
   targetSize = 224,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<ExtractionResult> {
   let imageBitmap: ImageBitmap;
   try {
@@ -108,6 +109,59 @@ export async function extractRuleOfThirdsPatches(
   if (width < targetSize && height < targetSize) {
     const emptyGrid = { cols: 0, rows: 0, total: 0 };
     return { patches: [], supportsDeepSampling: false, deepGrid: emptyGrid, currentGrid: emptyGrid, sampleMode, width, height };
+  }
+
+  // If explicit sample boxes were measured from HTML/CSS layout, crop them directly without calculating positions
+  if (sampleBoxes && sampleBoxes.length > 0) {
+    const patches: ExtractedPatch[] = [];
+    let patchIndex = 0;
+
+    for (const box of sampleBoxes) {
+      const position = `Sample #${patchIndex + 1}`;
+      const canvas = document.createElement('canvas');
+      canvas.width = targetSize;
+      canvas.height = targetSize;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      const sx = Math.max(0, Math.min(width - 1, Math.round(box.x * width)));
+      const sy = Math.max(0, Math.min(height - 1, Math.round(box.y * height)));
+      const sw = Math.max(1, Math.min(width - sx, Math.round(box.width * width)));
+      const sh = Math.max(1, Math.min(height - sy, Math.round(box.height * height)));
+
+      if (ctx) {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, targetSize, targetSize);
+        ctx.drawImage(imageBitmap, sx, sy, sw, sh, 0, 0, targetSize, targetSize);
+      }
+
+      patches.push({
+        position,
+        patchIndex: patchIndex++,
+        canvas,
+        box: {
+          x: sx / width,
+          y: sy / height,
+          width: sw / width,
+          height: sh / height
+        }
+      });
+    }
+
+    const currentGrid: GridDimensions = {
+      cols: Math.min(3, patches.length),
+      rows: Math.ceil(patches.length / 3),
+      total: patches.length
+    };
+
+    return {
+      patches,
+      supportsDeepSampling: patches.length > 4,
+      deepGrid: currentGrid,
+      currentGrid,
+      sampleMode,
+      width,
+      height
+    };
   }
 
   // Determine maximum crops along each axis

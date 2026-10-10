@@ -121,6 +121,7 @@ export type ExtensionMessage =
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
+      sampleBoxes?: PatchBox[];
     }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
   | {
@@ -140,6 +141,7 @@ export type ExtensionMessage =
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
+      sampleBoxes?: PatchBox[];
     }
   | {
       type: 'PROCESS_IMAGE_BUFFER';
@@ -150,6 +152,7 @@ export type ExtensionMessage =
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
+      sampleBoxes?: PatchBox[];
     }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }
@@ -169,6 +172,7 @@ export type ExtensionMessage =
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
+      sampleBoxes?: PatchBox[];
     }
   | { type: 'GLOBAL_STATE_CHANGED'; enabled: boolean }
   | { type: 'GET_GLOBAL_STATE' }

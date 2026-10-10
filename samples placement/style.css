@@ -55,36 +55,6 @@ body {
     bottom: anchor(bottom);
     left: anchor(left);
     pointer-events: none;
-
-    background-image:
-        /* Vertical guidelines */
-        linear-gradient(to right,
-            transparent calc(100% / 3 - 0.5px),
-            var(--gridLineColor) calc(100% / 3 - 0.5px),
-            var(--gridLineColor) calc(100% / 3 + 0.5px),
-            transparent calc(100% / 3 + 0.5px),
-            transparent calc(50% - 0.5px),
-            var(--gridCenterLineColor) calc(50% - 0.5px),
-            var(--gridCenterLineColor) calc(50% + 0.5px),
-            transparent calc(50% + 0.5px),
-            transparent calc(100% * 2 / 3 - 0.5px),
-            var(--gridLineColor) calc(100% * 2 / 3 - 0.5px),
-            var(--gridLineColor) calc(100% * 2 / 3 + 0.5px),
-            transparent calc(100% * 2 / 3 + 0.5px)),
-        /* Horizontal guidelines */
-        linear-gradient(to bottom,
-            transparent calc(100% / 3 - 0.5px),
-            var(--gridLineColor) calc(100% / 3 - 0.5px),
-            var(--gridLineColor) calc(100% / 3 + 0.5px),
-            transparent calc(100% / 3 + 0.5px),
-            transparent calc(50% - 0.5px),
-            var(--gridCenterLineColor) calc(50% - 0.5px),
-            var(--gridCenterLineColor) calc(50% + 0.5px),
-            transparent calc(50% + 0.5px),
-            transparent calc(100% * 2 / 3 - 0.5px),
-            var(--gridLineColor) calc(100% * 2 / 3 - 0.5px),
-            var(--gridLineColor) calc(100% * 2 / 3 + 0.5px),
-            transparent calc(100% * 2 / 3 + 0.5px));
     display: flex;
     flex-direction: column;
     justify-content: center;
