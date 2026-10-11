@@ -12,8 +12,6 @@ interface BadgeEntry {
   hoverAbortController?: AbortController;
   patches?: PatchResult[];
   result?: AnalysisResult;
-  standardResult?: AnalysisResult;
-  deepResult?: AnalysisResult;
   isDeepening?: boolean;
 }
 
@@ -867,11 +865,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   const { badgeEl, tooltipEl } = entry;
   entry.patches = result.patchScores;
   entry.result = result;
-  if (result.sampleMode === 'standard') {
-    entry.standardResult = result;
-  } else if (result.sampleMode === 'deep') {
-    entry.deepResult = result;
-  }
 
   const activeModals = getActiveModalElements();
   const isModalActive = activeModals.length > 0 || isPageInModalState();
@@ -1045,9 +1038,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     hideRegionsForEntry(entry);
   }
 
-  const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
   const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
-  const isDeepActive = result.sampleMode === 'deep';
   const gridCols = currentGrid.cols;
 
   const gridClass = `detectorTooltip__patchesGrid detectorTooltip__patchesGrid--${gridCols}Cols`;
@@ -1062,18 +1053,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
         }">${Math.round(p.aiScore * 100)}%</strong></div>`
     )
     .join('');
-
-  let switchButtonHtml = '';
-  if (result.supportsDeepSampling && result.sampleMode !== 'fast') {
-    const btnText = isDeepActive
-      ? 'Switch to standard (4 samples)'
-      : `Switch to ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})`;
-    switchButtonHtml = `
-      <button class="detectorTooltip__sampleToggleBtn ${isDeepActive ? 'detectorTooltip__sampleToggleBtn--active' : ''}">
-        ${btnText}
-      </button>
-    `;
-  }
 
   let deepeningHtml = '';
   if (result.sampleMode === 'fast') {
@@ -1134,7 +1113,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     </div>
     ${deepeningHtml}
     ${assessmentHtml}
-    ${switchButtonHtml}
     <div class="detectorTooltip__disclaimer">Probabilistic estimate based on on-device analysis</div>
   `;
 
@@ -1192,103 +1170,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     }
   });
 
-  // Attach click listener for standard <-> deep sample toggle button
-  const toggleBtn = tooltipEl.querySelector<HTMLButtonElement>('.detectorTooltip__sampleToggleBtn');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
 
-      const nextMode: 'standard' | 'deep' = isDeepActive ? 'standard' : 'deep';
-      const existingEntry = badgeRegistry.get(targetEl);
-      const cachedResult = nextMode === 'deep' ? existingEntry?.deepResult : existingEntry?.standardResult;
-
-      if (cachedResult) {
-        // Instant switch if calculation has already been done before
-        const wasTooltipOpen = tooltipEl.matches && tooltipEl.matches(':popover-open');
-        injectImageBadge(targetEl, cachedResult);
-        if (wasTooltipOpen) {
-          const currentEntry = badgeRegistry.get(targetEl);
-          if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
-          try {
-            currentEntry?.tooltipEl.hidePopover();
-            currentEntry?.tooltipEl.showPopover();
-          } catch (e) {}
-        }
-
-        // Keep background service worker session & toolbar badge synced
-        try {
-          chrome.runtime.sendMessage({
-            type: 'ANALYZE_IMAGE',
-            imageUrl: cachedResult.imageUrl,
-            sampleMode: nextMode,
-            forceRescan: false,
-            priority: 'high'
-          });
-        } catch (e) {}
-        return;
-      }
-
-      toggleBtn.disabled = true;
-      toggleBtn.classList.add('detectorTooltip__sampleToggleBtn--loading');
-      toggleBtn.textContent =
-        nextMode === 'deep'
-          ? `Analyzing ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})...`
-          : `Analyzing standard samples...`;
-
-      try {
-        let dataUrl: string | undefined;
-        if (result.imageUrl.startsWith('data:') || result.imageUrl.startsWith('blob:')) {
-          dataUrl = result.imageUrl;
-        } else if (targetEl instanceof HTMLImageElement && targetEl.src && (targetEl.src.startsWith('data:') || targetEl.src.startsWith('blob:'))) {
-          dataUrl = targetEl.src;
-        }
-
-        const measured = getElementSampleBoxes(targetEl);
-
-        chrome.runtime.sendMessage(
-          {
-            type: 'ANALYZE_IMAGE',
-            imageUrl: result.imageUrl,
-            dataUrl,
-            sampleMode: nextMode,
-            sampleBoxes: measured.allBoxes,
-            forceRescan: false,
-            priority: 'high'
-          },
-          (response) => {
-            if (chrome.runtime.lastError || !response || !response.result) {
-              toggleBtn.disabled = false;
-              toggleBtn.classList.remove('detectorTooltip__sampleToggleBtn--loading');
-              toggleBtn.textContent = isDeepActive
-                ? 'Switch to standard (4 samples)'
-                : `Switch to ${deepGrid.total} samples (${deepGrid.cols}×${deepGrid.rows})`;
-              return;
-            }
-            if (!isOverlayActive) {
-              removeBadge(targetEl);
-              return;
-            }
-            if (response.result.status === 'complete') {
-              const wasTooltipOpen = tooltipEl.matches && tooltipEl.matches(':popover-open');
-              injectImageBadge(targetEl, response.result);
-              if (wasTooltipOpen) {
-                const currentEntry = badgeRegistry.get(targetEl);
-                if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
-                try {
-                  tooltipEl.hidePopover();
-                  tooltipEl.showPopover();
-                } catch (e) {}
-              }
-            }
-          }
-        );
-      } catch (err) {
-        toggleBtn.disabled = false;
-        toggleBtn.classList.remove('detectorTooltip__sampleToggleBtn--loading');
-      }
-    });
-  }
 
   updateBadgePosition(targetEl, activeModals);
 }
