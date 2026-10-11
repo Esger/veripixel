@@ -17,7 +17,7 @@ Tired of wondering if a viral photo, news image, or listing picture is authentic
 
 HOW IT WORKS
 1. Browse normally — VeriPixel monitors visible images on the page.
-2. A subtle indicator badge appears in the corner of images above thumbnail size.
+2. A clear indicator badge appears in the corner of images above thumbnail size.
 3. The badge displays an on-device probability estimate (from "No AI Signs" to "Possible AI" and "Likely AI").
 4. Click any badge to open an interactive forensic inspection popover with multi-region patch scores, media classification, EXIF camera metadata, and manipulation analysis.
 
@@ -125,15 +125,17 @@ All image decoding, feature extraction, and neural network inference occur local
 
 ## Packaging Guidelines
 
-To generate a clean ZIP package without macOS resource forks (`__MACOSX/`) or `.DS_Store` files:
+To generate a clean ZIP package with `manifest.json` directly at the root, and without macOS resource forks (`__MACOSX/`) or `.DS_Store` files:
 ```bash
-bash scripts/package-extension.sh
+npm run package
+# or: bash scripts/package-extension.sh
 ```
-Or manually:
+Or manually from terminal:
 ```bash
 npm run build
 cd dist && COPYFILE_DISABLE=1 zip -r -X ../veripixel-v0.2.0.zip . -x "*.DS_Store" -x "*__MACOSX*" -x "*/__MACOSX/*" -x "._*"
 ```
+*Note: Entering `cd dist` before zipping `.` ensures all files (including `manifest.json`) are located directly at the root of the zip archive rather than nested inside a `dist/` subfolder. Right-clicking the `dist` folder in macOS Finder nests the folder and adds `__MACOSX` resource forks, which causes Web Store validation rejections.*
 
 ---
 
