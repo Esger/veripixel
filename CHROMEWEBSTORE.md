@@ -126,4 +126,5 @@ esgerj+veripixel@gmail.com
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
-| 0.1.0 | 2026-09-23 | Initial release: client-side ONNX Runtime Web image detection, fast badge pass, regional deepening, EXIF inspection, and toolbar toggle. | Draft |
+| 0.2.0 | 2026-10-11 | Dual-process System 1 heuristic classifier + System 2 ONNX neural pipeline, responsive CSS sample placement layout, and bi-directional popover/region hover interaction. | Draft |
+| 0.1.0 | 2026-09-23 | Initial release: client-side ONNX Runtime Web image detection, fast badge pass, regional deepening, EXIF inspection, and toolbar toggle. | Archived |
