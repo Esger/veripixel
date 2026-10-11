@@ -1,4 +1,5 @@
-import { AnalysisResult, PatchResult } from '../shared/types';
+import { AnalysisResult, PatchBox, PatchResult, System1Result } from '../shared/types';
+import { createSamplesDom, measureSampleLayout } from './samples-layout';
 
 interface BadgeEntry {
   badgeEl: HTMLElement;
@@ -7,6 +8,8 @@ interface BadgeEntry {
   regionsWrapperEl?: HTMLElement;
   regionsContainerEl?: HTMLElement;
   regionEls: HTMLElement[];
+  targetPositions?: string[];
+  hoverAbortController?: AbortController;
   patches?: PatchResult[];
   result?: AnalysisResult;
   standardResult?: AnalysisResult;
@@ -35,11 +38,13 @@ export function isDetectorElement(el: Element): boolean {
     el.classList.contains('detectorTooltip') ||
     el.classList.contains('detectorRegion') ||
     el.classList.contains('detectorRegions') ||
-    el.classList.contains('detectorRegionsWrapper')
+    el.classList.contains('detectorRegionsWrapper') ||
+    el.classList.contains('samples') ||
+    el.classList.contains('sample__target')
   ) {
     return true;
   }
-  return !!el.closest?.('.detectorBadge, .detectorTooltip, .detectorRegionsWrapper, .detectorRegion, .detectorRegions');
+  return !!el.closest?.('.detectorBadge, .detectorTooltip, .detectorRegionsWrapper, .detectorRegion, .detectorRegions, .samples');
 }
 
 function isInsideHeaderOrNav(el: HTMLElement): boolean {
@@ -153,6 +158,55 @@ function getRealImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageH
   return { elW, elH, displayW, displayH, offsetX, offsetY, naturalW, naturalH };
 }
 
+function isSampleTargetVisible(target: HTMLElement, container: HTMLElement): boolean {
+  if (container.classList.contains('samples--scaled')) {
+    const pos = target.dataset.pos || '';
+    if (container.classList.contains('samples--hideTop') && pos.startsWith('top-')) return false;
+    if (container.classList.contains('samples--hideMiddle') && pos.startsWith('mid-')) return false;
+    if (container.classList.contains('samples--hideCenter') && pos.endsWith('-center')) return false;
+    if (container.classList.contains('samples--hideLeft') && pos.endsWith('-left')) return false;
+    return true;
+  }
+  let curr: HTMLElement | null = target;
+  while (curr && curr !== container) {
+    if (window.getComputedStyle(curr).display === 'none') return false;
+    curr = curr.parentElement;
+  }
+  return true;
+}
+
+function getVisibleSampleTargets(containerEl: HTMLElement, wrapperEl?: HTMLElement): HTMLElement[] {
+  const allTargets = Array.from(containerEl.querySelectorAll<HTMLElement>('.sample__target'));
+  if (containerEl.classList.contains('samples--scaled')) {
+    return allTargets.filter((t) => isSampleTargetVisible(t, containerEl));
+  }
+
+  const wasOpen = wrapperEl?.matches?.(':popover-open');
+  if (!wasOpen && wrapperEl?.showPopover) {
+    try {
+      wrapperEl.showPopover();
+    } catch {}
+  }
+
+  const visible = allTargets.filter((t) => {
+    let curr: HTMLElement | null = t;
+    while (curr && curr !== containerEl) {
+      if (window.getComputedStyle(curr).display === 'none') return false;
+      curr = curr.parentElement;
+    }
+    const r = t.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+
+  if (!wasOpen && wrapperEl?.hidePopover) {
+    try {
+      wrapperEl.hidePopover();
+    } catch {}
+  }
+
+  return visible.length > 0 ? visible : allTargets;
+}
+
 /**
  * Positions the wrapper over the target element, sizes the inner container
  * to mimic the real image size and offset, and lets CSS Grid/Flexbox handle sample layout.
@@ -166,21 +220,35 @@ function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
   // 1. Position the wrapper directly over the target element
   entry.regionsWrapperEl.style.top = 'anchor(top)';
   entry.regionsWrapperEl.style.left = 'anchor(left)';
-  entry.regionsWrapperEl.style.width = 'anchor-size(width)';
-  entry.regionsWrapperEl.style.height = 'anchor-size(height)';
+  entry.regionsWrapperEl.style.right = 'anchor(right)';
+  entry.regionsWrapperEl.style.bottom = 'anchor(bottom)';
+  entry.regionsWrapperEl.style.width = `${Math.round(geo.elW)}px`;
+  entry.regionsWrapperEl.style.height = `${Math.round(geo.elH)}px`;
 
   // 2. Size the inner container to mimic the real image size and offset
+  entry.regionsContainerEl.style.top = `${Math.round(geo.offsetY)}px`;
+  entry.regionsContainerEl.style.left = `${Math.round(geo.offsetX)}px`;
+  entry.regionsContainerEl.style.width = `${Math.round(geo.displayW)}px`;
+  entry.regionsContainerEl.style.height = `${Math.round(geo.displayH)}px`;
   entry.regionsContainerEl.style.setProperty('--image-offset-x', `${Math.round(geo.offsetX)}px`);
   entry.regionsContainerEl.style.setProperty('--image-offset-y', `${Math.round(geo.offsetY)}px`);
   entry.regionsContainerEl.style.setProperty('--image-width', `${Math.round(geo.displayW)}px`);
   entry.regionsContainerEl.style.setProperty('--image-height', `${Math.round(geo.displayH)}px`);
 
-  // 3. Render boxes at the exact sample size (224px native crop mapped to rendered display scale)
+  // 3. Render boxes at the exact sample size (240px native crop mapped to rendered display scale)
   const naturalW = geo.naturalW || entry.result?.imageWidth || geo.displayW;
   const scale = naturalW > 0 ? geo.displayW / naturalW : 1;
-  const sampleSize = Math.max(24, Math.round(224 * scale));
+  const sampleSize = Math.max(24, Math.round(240 * scale));
+  entry.regionsContainerEl.style.setProperty('--sampleSize', `${sampleSize}px`);
   entry.regionsContainerEl.style.setProperty('--sample-size', `${sampleSize}px`);
   entry.regionsContainerEl.style.setProperty('--region-size', `${sampleSize}px`);
+
+  // Apply responsive classes to avoid overlap when display dimensions are scaled
+  entry.regionsContainerEl.classList.add('samples--scaled');
+  entry.regionsContainerEl.classList.toggle('samples--hideMiddle', geo.displayH < 4 * sampleSize);
+  entry.regionsContainerEl.classList.toggle('samples--hideTop', geo.displayH < 3 * sampleSize);
+  entry.regionsContainerEl.classList.toggle('samples--hideCenter', geo.displayW < 3 * sampleSize);
+  entry.regionsContainerEl.classList.toggle('samples--hideLeft', geo.displayW < 2 * sampleSize);
 
   // 4. Read rendered values from DOM elements
   if (entry.regionsWrapperEl.matches(':popover-open')) {
@@ -194,6 +262,95 @@ function applyRegionPositions(targetEl: HTMLElement, entry: BadgeEntry): void {
       regionEl.dataset.renderedSize = String(Math.round(rRect.width));
     });
   }
+}
+
+/**
+ * Reads the rendered sample bounding boxes directly from the element's sample layout DOM.
+ * This ensures the worker receives the exact positions placed by CSS without mathematical calculation.
+ */
+export function getElementSampleBoxes(targetEl: HTMLElement): {
+  allBoxes: PatchBox[];
+  centerBox: PatchBox;
+  targetPositions: string[];
+} {
+  const entry = badgeRegistry.get(targetEl);
+  if (entry?.regionsContainerEl && entry.regionsWrapperEl) {
+    const wasOpen = entry.regionsWrapperEl.matches(':popover-open');
+    if (!wasOpen) {
+      try {
+        entry.regionsWrapperEl.showPopover();
+      } catch (e) {}
+    }
+    applyRegionPositions(targetEl, entry);
+
+    const container = entry.regionsContainerEl;
+    const cRect = container.getBoundingClientRect();
+    if (cRect.width > 0 && cRect.height > 0) {
+      const visibleTargets = Array.from(container.querySelectorAll<HTMLElement>('.sample__target')).filter((t) => {
+        let curr: HTMLElement | null = t;
+        while (curr && curr !== container) {
+          if (window.getComputedStyle(curr).display === 'none') return false;
+          curr = curr.parentElement;
+        }
+        const r = t.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+
+      if (visibleTargets.length > 0) {
+        const allBoxes: PatchBox[] = [];
+        const targetPositions: string[] = [];
+        let centerBox: PatchBox | null = null;
+
+        visibleTargets.forEach((t) => {
+          const r = t.getBoundingClientRect();
+          const pos = t.dataset.pos || '';
+          const box: PatchBox = {
+            x: Math.max(0, Math.min(1, (r.left - cRect.left) / cRect.width)),
+            y: Math.max(0, Math.min(1, (r.top - cRect.top) / cRect.height)),
+            width: Math.max(0.01, Math.min(1, r.width / cRect.width)),
+            height: Math.max(0.01, Math.min(1, r.height / cRect.height))
+          };
+          allBoxes.push(box);
+          targetPositions.push(pos);
+
+          if (pos === 'mid-center') {
+            centerBox = box;
+          } else if (!centerBox && pos.includes('center')) {
+            centerBox = box;
+          }
+        });
+
+        if (!centerBox) {
+          centerBox = allBoxes[Math.floor(allBoxes.length / 2)] || allBoxes[0];
+        }
+
+        if (!wasOpen) {
+          try {
+            entry.regionsWrapperEl.hidePopover();
+          } catch (e) {}
+        }
+
+        entry.targetPositions = targetPositions;
+        return { allBoxes, centerBox, targetPositions };
+      }
+    }
+
+    if (!wasOpen) {
+      try {
+        entry.regionsWrapperEl.hidePopover();
+      } catch (e) {}
+    }
+  }
+
+  // Fallback to measureSampleLayout if not yet attached or rendered
+  const geo = getRealImageGeometry(targetEl);
+  const naturalW = geo.naturalW || geo.displayW || 800;
+  const naturalH = geo.naturalH || geo.displayH || 600;
+  const measured = measureSampleLayout(naturalW, naturalH);
+  if (entry) {
+    entry.targetPositions = measured.targetPositions;
+  }
+  return measured;
 }
 
 export function isPageInModalState(): boolean {
@@ -343,6 +500,10 @@ function showRegionsForEntry(entry: BadgeEntry, targetEl?: HTMLElement): void {
 }
 
 function hideRegionsForEntry(entry: BadgeEntry): void {
+  entry.regionEls.forEach((el) => el.classList.remove('sample__target--highlighted'));
+  entry.tooltipEl?.querySelectorAll('.detectorTooltip__patchItem--highlighted').forEach((el) => {
+    el.classList.remove('detectorTooltip__patchItem--highlighted');
+  });
   if (entry.regionsWrapperEl) {
     try {
       if (entry.regionsWrapperEl.matches(':popover-open')) {
@@ -396,6 +557,9 @@ function showBadgeForEntry(entry: BadgeEntry, targetEl: HTMLElement): void {
   }
 
   applyRegionPositions(targetEl, entry);
+  if (entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open')) {
+    showRegionsForEntry(entry, targetEl);
+  }
 }
 
 export function checkPageModalState(onModalClosed?: () => void): void {
@@ -465,12 +629,15 @@ function triggerRegionalDeepening(targetEl: HTMLElement, entry: BadgeEntry): voi
       dataUrl = targetEl.src;
     }
 
+    const measured = getElementSampleBoxes(targetEl);
+
     chrome.runtime.sendMessage(
       {
         type: 'ANALYZE_IMAGE',
         imageUrl: entry.result.imageUrl,
         dataUrl,
         sampleMode: 'standard',
+        sampleBoxes: measured.allBoxes,
         priority: 'high'
       },
       (response) => {
@@ -572,9 +739,7 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
       tooltipEl.hidePopover();
       if (currentEntry) hideRegionsForEntry(currentEntry);
     } else if (typeof tooltipEl.showPopover === 'function') {
-      // Open region markers first so they enter the top layer underneath
       if (currentEntry) showRegionsForEntry(currentEntry, targetEl);
-      // Open tooltip popover second so it appears on top of the region markers
       tooltipEl.showPopover();
       triggerDeepening();
     }
@@ -583,18 +748,39 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   // Light-dismiss on click outside
   document.addEventListener('click', (e) => {
     if (tooltipEl.matches && tooltipEl.matches(':popover-open')) {
-      if (!tooltipEl.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
+      const currentEntry = badgeRegistry.get(targetEl);
+      if (
+        !tooltipEl.contains(e.target as Node) &&
+        !badgeEl.contains(e.target as Node) &&
+        !currentEntry?.regionsWrapperEl?.contains(e.target as Node)
+      ) {
         tooltipEl.hidePopover();
-        const currentEntry = badgeRegistry.get(targetEl);
         if (currentEntry) hideRegionsForEntry(currentEntry);
       }
     }
   });
 
+  const regionsWrapperEl = document.createElement('div');
+  regionsWrapperEl.className = 'detectorRegionsWrapper';
+  regionsWrapperEl.setAttribute('popover', 'manual');
+  regionsWrapperEl.style.setProperty('--badge-anchor', anchorName);
+  regionsWrapperEl.style.setProperty('position-anchor', anchorName);
+
+  const regionsContainerEl = createSamplesDom();
+  regionsWrapperEl.appendChild(regionsContainerEl);
+
+  document.body.appendChild(regionsWrapperEl);
   document.body.appendChild(badgeEl);
   document.body.appendChild(tooltipEl);
 
-  badgeRegistry.set(targetEl, { badgeEl, tooltipEl, anchorName, regionEls: [] });
+  badgeRegistry.set(targetEl, {
+    badgeEl,
+    tooltipEl,
+    anchorName,
+    regionsWrapperEl,
+    regionsContainerEl,
+    regionEls: []
+  });
 
   const activeModals = getActiveModalElements();
   const isModalActive = activeModals.length > 0 || isPageInModalState();
@@ -608,6 +794,60 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
     }
   }
   updateBadgePosition(targetEl, activeModals);
+}
+
+export function updateBadgePreliminary(targetEl: HTMLElement, _system1?: System1Result): void {
+  if (!isOverlayActive) return;
+
+  // If final analysis has already completed, do not overwrite with preliminary state
+  if (targetEl.dataset.aiDetectorBadgeInjected === 'true') {
+    return;
+  }
+
+  // Ensure loading badge is created if not already present
+  if (!targetEl.dataset.aiDetectorBadgeInjected) {
+    injectLoadingBadge(targetEl);
+  }
+  targetEl.dataset.aiDetectorBadgeInjected = 'preliminary';
+
+  const entry = badgeRegistry.get(targetEl);
+  if (!entry) return;
+
+  const { badgeEl, tooltipEl } = entry;
+
+  badgeEl.classList.remove('detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
+  badgeEl.classList.add('detectorBadge--preliminary');
+
+  let verdictTextEl = badgeEl.querySelector('.detectorBadge__verdictText') as HTMLElement | null;
+  const scoreText = badgeEl.querySelector('.detectorBadge__scoreText') as HTMLElement | null;
+
+  if (!verdictTextEl) {
+    verdictTextEl = document.createElement('span');
+    verdictTextEl.className = 'detectorBadge__verdictText';
+    if (scoreText) {
+      badgeEl.insertBefore(verdictTextEl, scoreText);
+    } else {
+      badgeEl.appendChild(verdictTextEl);
+    }
+  }
+  verdictTextEl.textContent = 'Scanning';
+
+  if (scoreText) {
+    scoreText.textContent = '...';
+  }
+
+  badgeEl.title = 'Running authenticity scan...';
+
+  tooltipEl.innerHTML = `
+    <div class="detectorTooltip__preliminary">
+      <div class="detectorTooltip__preliminaryHeader">Authenticity Analysis</div>
+      <div class="detectorTooltip__preliminarySummary">Preliminary properties verified. Running deep scan...</div>
+      <div class="detectorTooltip__preliminaryStatus">
+        <span class="detectorBadge__dot detectorBadge__dot--loading"></span>
+        Running neural authenticity scan...
+      </div>
+    </div>
+  `;
 }
 
 export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult): void {
@@ -646,7 +886,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   }
 
   const scorePercent = Math.round(result.aiScore * 100);
-  const mediaType = result.mediaType || result.reasoning?.mediaType;
   let statusModifier = 'lowAi';
   let statusText = 'Likely Authentic';
 
@@ -655,24 +894,12 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     statusText = 'High AI Probability';
   } else if (scorePercent >= 30) {
     statusModifier = 'mediumAi';
-    statusText = 'Possible AI/Edited';
+    statusText = result.reasoning?.type === 'localized-edit' ? 'Localized AI Alteration' : 'Possible AI/Edited';
   } else {
-    if (mediaType === 'pen-ink-art') {
-      statusText = 'Authentic Drawing';
-    } else if (mediaType === 'digital-art') {
-      statusText = 'Authentic Artwork';
-    } else if (mediaType === 'screen-capture') {
-      statusText = 'Authentic Screenshot';
-    } else if (mediaType === 'graphic-or-ui') {
-      statusText = 'Authentic Graphic';
-    } else if (mediaType === 'camera-photo') {
-      statusText = 'Authentic Photo';
-    } else {
-      statusText = 'Likely Authentic';
-    }
+    statusText = 'Likely Authentic';
   }
 
-  badgeEl.classList.remove('detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
+  badgeEl.classList.remove('detectorBadge--preliminary', 'detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
   badgeEl.classList.add(`detectorBadge--${statusModifier}`);
 
   const dotEl = badgeEl.querySelector('.detectorBadge__dot') as HTMLElement | null;
@@ -689,12 +916,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   } else if (scorePercent >= 30) {
     conciseVerdict = result.reasoning?.type === 'localized-edit' ? 'Edited' : 'Possible AI';
   } else {
-    if (mediaType === 'pen-ink-art') conciseVerdict = 'Drawing';
-    else if (mediaType === 'digital-art') conciseVerdict = 'Artwork';
-    else if (mediaType === 'screen-capture') conciseVerdict = 'Screenshot';
-    else if (mediaType === 'graphic-or-ui') conciseVerdict = 'Graphic';
-    else if (mediaType === 'camera-photo') conciseVerdict = 'Photo';
-    else conciseVerdict = 'Authentic';
+    conciseVerdict = 'Authentic';
   }
 
   if (!verdictTextEl) {
@@ -730,7 +952,6 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   badgeEl.title = `${statusText} (${scorePercent}% AI${sampleNote}) - Click to inspect forensic details`;
 
   // Create or retrieve native anchor-positioned regions wrapper & container
-  hideRegionsForEntry(entry);
   if (!entry.regionsWrapperEl) {
     const regionsWrapperEl = document.createElement('div');
     regionsWrapperEl.className = 'detectorRegionsWrapper';
@@ -738,8 +959,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     regionsWrapperEl.style.setProperty('--badge-anchor', entry.anchorName);
     regionsWrapperEl.style.setProperty('position-anchor', entry.anchorName);
 
-    const regionsContainerEl = document.createElement('div');
-    regionsContainerEl.className = 'detectorRegions';
+    const regionsContainerEl = createSamplesDom();
     regionsWrapperEl.appendChild(regionsContainerEl);
 
     document.body.appendChild(regionsWrapperEl);
@@ -748,20 +968,21 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   }
 
   const containerEl = entry.regionsContainerEl!;
+  applyRegionPositions(targetEl, entry);
 
-  // Clear existing region elements
-  containerEl.innerHTML = '';
+  const visibleTargets = getVisibleSampleTargets(containerEl, entry.regionsWrapperEl);
+
+  const allTargets = Array.from(containerEl.querySelectorAll<HTMLElement>('.sample__target'));
+  allTargets.forEach((t) => {
+    t.className = 'sample__target';
+    t.innerHTML = '';
+    delete t.dataset.patchIndex;
+  });
+
   entry.regionEls = [];
 
-  const totalCount = result.patchScores.length;
-  const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
-  const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
-  const isDeepActive = result.sampleMode === 'deep';
-  const gridCols = currentGrid.cols;
-
-  containerEl.className = 'detectorRegions';
-
-  const createRegionEl = (patch: PatchResult, idx: number): HTMLElement => {
+  if (result.patchScores.length === 1) {
+    const patch = result.patchScores[0];
     const patchScorePercent = Math.round(patch.aiScore * 100);
     let mod = 'lowAi';
     if (patchScorePercent >= 70) {
@@ -770,60 +991,64 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
       mod = 'mediumAi';
     }
 
-    const regionEl = document.createElement('div');
-    regionEl.className = `detectorRegion detectorRegion--${mod}`;
-    regionEl.dataset.patchIndex = String(idx);
-
-    const labelText = `Sample #${idx + 1}`;
-    regionEl.innerHTML = `<span class="detectorRegion__label detectorRegion__label--${mod}">${labelText} (${patchScorePercent}%)</span>`;
-
-    return regionEl;
-  };
-
-  if (totalCount === 1) {
-    // 1 box: grid lines 50%
-    containerEl.classList.add('detectorRegions--1Box');
-    const regionEl = createRegionEl(result.patchScores[0], 0);
-    containerEl.appendChild(regionEl);
-    entry.regionEls.push(regionEl);
-  } else if (totalCount === 2) {
-    // 2 boxes: flex space-around / wrap
-    containerEl.classList.add('detectorRegions--2Boxes');
-    result.patchScores.forEach((patch, idx) => {
-      const regionEl = createRegionEl(patch, idx);
-      containerEl.appendChild(regionEl);
-      entry.regionEls.push(regionEl);
-    });
-  } else if (totalCount === 4) {
-    // 4 boxes: grid-lines 1/3 (Rule of Thirds)
-    containerEl.classList.add('detectorRegions--4Boxes');
-    result.patchScores.forEach((patch, idx) => {
-      const regionEl = createRegionEl(patch, idx);
-      containerEl.appendChild(regionEl);
-      entry.regionEls.push(regionEl);
-    });
-  } else {
-    // 6 or 9 boxes: flex space-around inline and block / wrap
-    containerEl.classList.add(totalCount === 6 ? 'detectorRegions--6Boxes' : 'detectorRegions--9Boxes');
-    const colsCount = gridCols || (totalCount === 6 ? 3 : 3);
-    const rowsCount = Math.ceil(totalCount / colsCount);
-    for (let r = 0; r < rowsCount; r++) {
-      const rowEl = document.createElement('div');
-      rowEl.className = 'detectorRegions__row';
-      containerEl.appendChild(rowEl);
-      for (let c = 0; c < colsCount; c++) {
-        const idx = r * colsCount + c;
-        const patch = result.patchScores[idx];
-        if (!patch) continue;
-        const regionEl = createRegionEl(patch, idx);
-        rowEl.appendChild(regionEl);
-        entry.regionEls.push(regionEl);
-      }
+    let centerTarget = visibleTargets.find((t) => t.dataset.pos === 'mid-center');
+    if (!centerTarget) {
+      centerTarget = visibleTargets.find((t) => t.dataset.pos === 'bot-center');
     }
+    if (!centerTarget) {
+      centerTarget = visibleTargets.find((t) => t.dataset.pos === 'top-center');
+    }
+    if (!centerTarget) {
+      centerTarget = visibleTargets.find((t) => t.dataset.pos?.includes('center'));
+    }
+    if (!centerTarget) {
+      centerTarget = visibleTargets[Math.floor(visibleTargets.length / 2)] || visibleTargets[0] || allTargets[0];
+    }
+
+    if (centerTarget) {
+      centerTarget.className = `sample__target sample__target--${mod}`;
+      centerTarget.dataset.patchIndex = '0';
+      centerTarget.innerHTML = `<span class="sample__targetLabel">Sample #1 (${patchScorePercent}%)</span>`;
+      entry.regionEls.push(centerTarget);
+    }
+  } else {
+    result.patchScores.forEach((patch, idx) => {
+      const patchScorePercent = Math.round(patch.aiScore * 100);
+      let mod = 'lowAi';
+      if (patchScorePercent >= 70) {
+        mod = 'highAi';
+      } else if (patchScorePercent >= 30) {
+        mod = 'mediumAi';
+      }
+
+      let targetSampleEl: HTMLElement | undefined;
+      if (entry.targetPositions && entry.targetPositions[idx]) {
+        targetSampleEl = containerEl.querySelector<HTMLElement>(`.sample__target[data-pos="${entry.targetPositions[idx]}"]`) || undefined;
+      }
+      if (!targetSampleEl) {
+        targetSampleEl = visibleTargets[idx] || allTargets[idx];
+      }
+
+      if (targetSampleEl) {
+        targetSampleEl.className = `sample__target sample__target--${mod}`;
+        targetSampleEl.dataset.patchIndex = String(idx);
+        const labelText = `Sample #${idx + 1}`;
+        targetSampleEl.innerHTML = `<span class="sample__targetLabel">${labelText} (${patchScorePercent}%)</span>`;
+        entry.regionEls.push(targetSampleEl);
+      }
+    });
   }
 
-  // Calculate container geometry and read rendered values from the browser
-  applyRegionPositions(targetEl, entry);
+  if (entry.tooltipEl.matches && entry.tooltipEl.matches(':popover-open')) {
+    showRegionsForEntry(entry, targetEl);
+  } else {
+    hideRegionsForEntry(entry);
+  }
+
+  const deepGrid = result.deepGrid || { cols: 3, rows: 3, total: 9 };
+  const currentGrid = result.currentGrid || { cols: 2, rows: 2, total: 4 };
+  const isDeepActive = result.sampleMode === 'deep';
+  const gridCols = currentGrid.cols;
 
   const gridClass = `detectorTooltip__patchesGrid detectorTooltip__patchesGrid--${gridCols}Cols`;
 
@@ -865,17 +1090,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     if (result.reasoning.type === 'localized-edit') icon = '🎭';
     else if (result.reasoning.type === 'full-synthetic') icon = '🤖';
     else if (result.reasoning.type === 'likely-real') {
-      if (mediaType === 'pen-ink-art') icon = '✒️';
-      else if (mediaType === 'digital-art') icon = '🎨';
-      else if (mediaType === 'screen-capture') icon = '🖥️';
-      else if (mediaType === 'graphic-or-ui') icon = '📐';
-      else if (result.metadata.c2paPresent) icon = '🛡️';
-      else icon = '📸';
+      icon = result.metadata.c2paPresent ? '🛡️' : '📸';
     } else if (result.reasoning.type === 'ambiguous') {
-      if (mediaType === 'pen-ink-art') icon = '✒️';
-      else if (mediaType === 'screen-capture') icon = '🖥️';
-      else if (mediaType === 'digital-art') icon = '🎨';
-      else icon = '🔍';
+      icon = '🔍';
     }
 
     assessmentHtml = `
@@ -889,33 +1106,16 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     `;
   }
 
-  const isDigitalNonCamera =
-    mediaType === 'digital-art' || mediaType === 'screen-capture' || mediaType === 'graphic-or-ui';
   const cameraDisplayVal =
     result.metadata.cameraModel ||
     (result.metadata.exifPresent
       ? 'Present'
-      : mediaType === 'pen-ink-art'
-      ? 'Physical Drawing Scan'
-      : isDigitalNonCamera
-      ? 'N/A (Digital Source)'
       : 'None/Stripped');
-
-  let mediaTypeLabel = 'Digital Media';
-  if (mediaType === 'pen-ink-art') mediaTypeLabel = 'Hand-Drawn Artwork / Sketch';
-  else if (mediaType === 'digital-art') mediaTypeLabel = 'Digital Art / Illustration';
-  else if (mediaType === 'screen-capture') mediaTypeLabel = 'Screen Capture / Screenshot';
-  else if (mediaType === 'graphic-or-ui') mediaTypeLabel = 'Graphic Design / UI';
-  else if (mediaType === 'camera-photo') mediaTypeLabel = 'Camera Photograph';
 
   tooltipEl.innerHTML = `
     <div class="detectorTooltip__header detectorTooltip__header--${statusModifier}">
       <span>${statusText}</span>
       <span>${scorePercent}% AI</span>
-    </div>
-    <div class="detectorTooltip__row">
-      <span>Media Type:</span>
-      <span class="detectorTooltip__val">${mediaTypeLabel}</span>
     </div>
     <div class="detectorTooltip__row">
       <span>EXIF Camera:</span>
@@ -937,16 +1137,57 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     ${switchButtonHtml}
   `;
 
-  // Attach hover highlight listeners to patch items in tooltip
+  if (entry.hoverAbortController) {
+    entry.hoverAbortController.abort();
+  }
+  entry.hoverAbortController = new AbortController();
+  const { signal } = entry.hoverAbortController;
+
+  // Bi-directional hover highlight listeners:
+  // 1. Tooltip items -> Sample region targets over image
   tooltipEl.querySelectorAll<HTMLElement>('.detectorTooltip__patchItem').forEach((item) => {
     const idx = parseInt(item.dataset.patchIndex || '-1', 10);
-    if (idx >= 0 && entry.regionEls[idx]) {
-      item.addEventListener('mouseenter', () => {
-        entry.regionEls[idx].classList.add('detectorRegion--highlighted');
-      });
-      item.addEventListener('mouseleave', () => {
-        entry.regionEls[idx].classList.remove('detectorRegion--highlighted');
-      });
+    const regionEl = entry.regionEls[idx];
+    if (idx >= 0 && regionEl) {
+      item.addEventListener(
+        'mouseenter',
+        () => {
+          regionEl.classList.add('sample__target--highlighted');
+          item.classList.add('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
+      item.addEventListener(
+        'mouseleave',
+        () => {
+          regionEl.classList.remove('sample__target--highlighted');
+          item.classList.remove('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
+    }
+  });
+
+  // 2. Sample region targets over image -> Tooltip items in popover
+  entry.regionEls.forEach((regionEl, idx) => {
+    const item = tooltipEl.querySelector<HTMLElement>(`.detectorTooltip__patchItem[data-patch-index="${idx}"]`);
+    if (item) {
+      regionEl.addEventListener(
+        'mouseenter',
+        () => {
+          regionEl.classList.add('sample__target--highlighted');
+          item.classList.add('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
+      regionEl.addEventListener(
+        'mouseleave',
+        () => {
+          regionEl.classList.remove('sample__target--highlighted');
+          item.classList.remove('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
     }
   });
 
@@ -1002,12 +1243,15 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
           dataUrl = targetEl.src;
         }
 
+        const measured = getElementSampleBoxes(targetEl);
+
         chrome.runtime.sendMessage(
           {
             type: 'ANALYZE_IMAGE',
             imageUrl: result.imageUrl,
             dataUrl,
             sampleMode: nextMode,
+            sampleBoxes: measured.allBoxes,
             forceRescan: false,
             priority: 'high'
           },
@@ -1051,6 +1295,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 export function removeBadge(targetEl: HTMLElement, keepProcessedState = false): void {
   const entry = badgeRegistry.get(targetEl);
   if (entry) {
+    if (entry.hoverAbortController) {
+      entry.hoverAbortController.abort();
+    }
     hideRegionsForEntry(entry);
     if (entry.regionsWrapperEl) {
       entry.regionsWrapperEl.remove();

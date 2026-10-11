@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Sample Placement Sizes</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    #resultsPanel {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      max-height: 90vh;
+      overflow-y: auto;
+      background: rgba(15, 23, 42, 0.95);
+      color: #fff;
+      padding: 16px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 13px;
+      z-index: 99999;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.1);
+      max-width: 750px;
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .pass { color: #10B981; font-weight: bold; }
+    .fail { color: #EF4444; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div id="resultsPanel">
+    <h3>Placement Test Suite</h3>
+    <div id="summary">Running tests...</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Dimensions</th>
+          <th>Samples</th>
+          <th>Poking Out</th>
+          <th>Overlap</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="testTableBody"></tbody>
+    </table>
+  </div>
+
+  <img id="targetImage"
+      class="targetImage"
+      src="sample.jpg"
+      width="1800"
+      height="1500"
+      alt="Reference sample image">
+  <div class="samples">
+      <div class="samples__wrapper">
+          <div class="samples__top">
+              <div class="sample__left">
+                  <div class="sample__target"></div>
+              </div>
+              <div class="sample__center">
+                  <div class="sample__target"></div>
+              </div>
+              <div class="sample__right">
+                  <div class="sample__target"></div>
+              </div>
+          </div>
+          <div class="samples__middle">
+              <div class="sample__left">
+                  <div class="sample__target"></div>
+              </div>
+              <div class="sample__center">
+                  <div class="sample__target"></div>
+              </div>
+              <div class="sample__right">
+                  <div class="sample__target"></div>
+              </div>
+          </div>
+          <div class="samples__bottom">
+              <div class="sample__left">
+                  <div class="sample__target"></div>
+              </div>
+              <div class="sample__center">
+                  <div class="sample__target"></div>
+              </div>
+              <div class="sample__right">
+                  <div class="sample__target"></div>
+              </div>
+          </div>
+      </div>
+  </div>
+
+  <script>
+    const sampleBreakpoints = [2000, 1800, 1400, 1000, 961, 960, 959, 800, 721, 720, 719, 600, 481, 480, 479, 360, 240, 200];
+    const testSizes = [];
+    for (const w of sampleBreakpoints) {
+      for (const h of sampleBreakpoints) {
+        testSizes.push([w, h]);
+      }
+    }
+
+    function runAllTestsSync() {
+      const img = document.getElementById('targetImage');
+      const samples = document.querySelector('.samples');
+      const tbody = document.getElementById('testTableBody');
+      let totalPassed = 0;
+
+      for (const [w, h] of testSizes) {
+        img.style.width = w + 'px';
+        img.style.height = h + 'px';
+        
+        // Force synchronous style & layout recalculation
+        void img.offsetHeight;
+        void samples.offsetHeight;
+        const sRect = samples.getBoundingClientRect();
+        
+        // Find all visible sample targets
+        const targets = Array.from(document.querySelectorAll('.sample__target')).filter(el => {
+          const rect = el.getBoundingClientRect();
+          const comp = window.getComputedStyle(el);
+          return rect.width > 0 && rect.height > 0 && comp.display !== 'none' && comp.visibility !== 'hidden';
+        });
+
+        // 1. Check poking out
+        let pokingCount = 0;
+        const pokingDetails = [];
+        targets.forEach((t, i) => {
+          const r = t.getBoundingClientRect();
+          const topDiff = sRect.top - r.top;
+          const bottomDiff = r.bottom - sRect.bottom;
+          const leftDiff = sRect.left - r.left;
+          const rightDiff = r.right - sRect.right;
+          
+          if (topDiff > 1 || bottomDiff > 1 || leftDiff > 1 || rightDiff > 1) {
+            pokingCount++;
+            pokingDetails.push(`T${i}: [top:${topDiff.toFixed(1)}, bot:${bottomDiff.toFixed(1)}, l:${leftDiff.toFixed(1)}, r:${rightDiff.toFixed(1)}]`);
+          }
+        });
+
+        // 2. Check overlap
+        let overlapCount = 0;
+        const overlapDetails = [];
+        for (let i = 0; i < targets.length; i++) {
+          for (let j = i + 1; j < targets.length; j++) {
+            const r1 = targets[i].getBoundingClientRect();
+            const r2 = targets[j].getBoundingClientRect();
+            
+            const noOverlap = (
+              r1.right <= r2.left + 1 ||
+              r1.left >= r2.right - 1 ||
+              r1.bottom <= r2.top + 1 ||
+              r1.top >= r2.bottom - 1
+            );
+            
+            if (!noOverlap) {
+              overlapCount++;
+              overlapDetails.push(`(T${i},T${j})`);
+            }
+          }
+        }
+
+        const passed = (pokingCount === 0 && overlapCount === 0);
+        if (passed) totalPassed++;
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${w}x${h}</td>
+          <td>${targets.length}</td>
+          <td class="${pokingCount === 0 ? 'pass' : 'fail'}">${pokingCount === 0 ? '0' : pokingDetails.join('; ')}</td>
+          <td class="${overlapCount === 0 ? 'pass' : 'fail'}">${overlapCount === 0 ? '0' : overlapDetails.join('; ')}</td>
+          <td class="${passed ? 'pass' : 'fail'}">${passed ? 'PASS' : 'FAIL'}</td>
+        `;
+        tbody.appendChild(row);
+      }
+
+      document.getElementById('summary').textContent = `Summary: ${totalPassed} / ${testSizes.length} Passed`;
+    }
+
+    runAllTestsSync();
+  </script>
+</body>
+</html>

@@ -381,6 +381,15 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     return false;
   }
 
+  if (message.type === 'IMAGE_PRELIMINARY_RESULT') {
+    const tabId = message.tabId;
+    if (tabId !== undefined) {
+      chrome.tabs.sendMessage(tabId, message).catch(() => {});
+    }
+    sendResponse({ status: 'ok' });
+    return false;
+  }
+
   if (message.type === 'ANALYZE_IMAGE' || message.type === 'ANALYZE_IMAGE_BUFFER') {
     (async () => {
       const tabId = sender.tab?.id;
@@ -391,6 +400,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       const isModal = message.isModal || false;
       const requestedSampleMode = message.sampleMode || 'standard';
       const forceRescan = message.forceRescan || false;
+      const sampleBoxes = 'sampleBoxes' in message ? message.sampleBoxes : undefined;
 
       if (tabId !== undefined) {
         chrome.storage.session.set({ activeTabId: tabId }).catch(() => {});
@@ -477,7 +487,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 tabId,
                 priority: effectivePriority,
                 isModal,
-                sampleMode: requestedSampleMode
+                sampleMode: requestedSampleMode,
+                sampleBoxes
               }
             : {
                 type: 'PROCESS_IMAGE_URL',
@@ -486,7 +497,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 tabId,
                 priority: effectivePriority,
                 isModal,
-                sampleMode: requestedSampleMode
+                sampleMode: requestedSampleMode,
+                sampleBoxes
               };
 
         let responseHandled = false;
@@ -708,7 +720,8 @@ function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void
     cameraModel: result.metadata.cameraModel,
     c2paPresent: result.metadata.c2paPresent,
     reasoningTitle: result.reasoning?.title,
-    mediaType: result.mediaType || result.reasoning?.mediaType
+    mediaType: result.mediaType || result.reasoning?.mediaType,
+    system1Summary: result.system1?.summary
   };
 
   const existingIdx = stats.images.findIndex((img) => img.imageUrl === displayUrl && displayUrl !== '');

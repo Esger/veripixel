@@ -1,6 +1,7 @@
 import {
   injectLoadingBadge,
   injectImageBadge,
+  updateBadgePreliminary,
   removeBadge,
   removeAllBadges,
   updateBadgePosition,
@@ -8,7 +9,8 @@ import {
   getActiveModalElements,
   isElementInsideActiveModal,
   isDetectorElement,
-  setOverlayEnabled
+  setOverlayEnabled,
+  getElementSampleBoxes
 } from './overlay';
 import { ExtensionMessage } from '../shared/types';
 
@@ -413,6 +415,8 @@ function processElement(el: HTMLElement): Promise<void> {
 
     const priority: 'high' | 'normal' = isInsideModal || inViewport ? 'high' : 'normal';
 
+    const measured = getElementSampleBoxes(el);
+
     const sendDataUrlAnalysis = async () => {
       if (!isDetectorEnabled) {
         inFlightUrls.delete(imageUrl);
@@ -437,7 +441,8 @@ function processElement(el: HTMLElement): Promise<void> {
             dataUrl,  // Pass extracted base64 dataUrl for inference
             priority,
             isModal: isInsideModal,
-            sampleMode: 'fast'
+            sampleMode: 'fast',
+            sampleBoxes: [measured.centerBox]
           } as ExtensionMessage,
           (response) => {
             inFlightUrls.delete(imageUrl);
@@ -497,7 +502,8 @@ function processElement(el: HTMLElement): Promise<void> {
           imageUrl,
           priority,
           isModal: isInsideModal,
-          sampleMode: 'fast'
+          sampleMode: 'fast',
+          sampleBoxes: [measured.centerBox]
         } as ExtensionMessage,
         async (response) => {
           inFlightUrls.delete(imageUrl);
@@ -1025,6 +1031,19 @@ document.addEventListener('visibilitychange', () => {
 chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
   if (message.type === 'GLOBAL_STATE_CHANGED') {
     setDetectorEnabledState(Boolean(message.enabled));
+    return;
+  }
+
+  if (message.type === 'IMAGE_PRELIMINARY_RESULT') {
+    if (!isDetectorEnabled) return;
+    const targetUrl = message.imageUrl;
+    const allImages = document.querySelectorAll<HTMLElement>('img, [style*="background"]');
+    for (const el of allImages) {
+      if (getElementImageUrl(el) === targetUrl) {
+        updateBadgePreliminary(el, message.system1);
+        break;
+      }
+    }
     return;
   }
 

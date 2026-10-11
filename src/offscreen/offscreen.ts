@@ -1,8 +1,16 @@
 import exifr from 'exifr';
-import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning, MediaType } from '../shared/types';
+import {
+  AnalysisResult,
+  MetadataResult,
+  PatchResult,
+  PatchBox,
+  ExtensionMessage
+} from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runBatchedPatchInference } from './model-runner';
-import { detectMediaType } from './media-detector';
+import { analyzeSystem1 } from './system1-analyzer';
+import { detectPatchPeriodicity } from './media-detector';
+import { fuseDecision } from './decision-engine';
 import { logger } from './logger';
 // Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
 // so that Chrome's extension manager does not collect them as extension errors.
@@ -210,197 +218,36 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
   }
 }
 
-/**
- * Synthesizes multi-patch scores, detected media type, and forensic metadata into actionable natural language reasoning.
- */
-function generateForensicReasoning(
-  patchScores: PatchResult[],
-  metadata: MetadataResult,
-  mediaType: MediaType = 'general-media'
-): ForensicReasoning {
-  if (patchScores.length === 0) {
-    return {
-      type: 'ambiguous',
-      title: 'Insufficient Data',
-      description: 'Image dimensions too small for multi-patch forensic analysis.',
-      mediaType
-    };
+
+
+// In-memory cache for evaluated patch scores keyed by imageUrl and normalized box coordinates.
+// Ensures that center patches evaluated in Fast mode are reused directly when upgrading to Standard or Deep mode,
+// and previously evaluated Standard patches are preserved when Deep mode runs.
+const imagePatchScoreCache = new Map<string, Map<string, number>>();
+const MAX_CACHED_IMAGES = 60;
+
+function getPatchCacheKey(box?: PatchBox): string {
+  if (!box) return '0_0_0_0';
+  return `${Math.round(box.x * 1000)}_${Math.round(box.y * 1000)}_${Math.round(box.width * 1000)}_${Math.round(box.height * 1000)}`;
+}
+
+function getCachedPatchScore(imageUrl: string, box?: PatchBox): number | undefined {
+  const map = imagePatchScoreCache.get(imageUrl);
+  if (!map) return undefined;
+  return map.get(getPatchCacheKey(box));
+}
+
+function setCachedPatchScore(imageUrl: string, box: PatchBox | undefined, score: number): void {
+  let map = imagePatchScoreCache.get(imageUrl);
+  if (!map) {
+    if (imagePatchScoreCache.size >= MAX_CACHED_IMAGES) {
+      const oldestKey = imagePatchScoreCache.keys().next().value;
+      if (oldestKey) imagePatchScoreCache.delete(oldestKey);
+    }
+    map = new Map<string, number>();
+    imagePatchScoreCache.set(imageUrl, map);
   }
-
-  const scores = patchScores.map((p) => p.aiScore);
-  const maxScore = Math.max(...scores);
-  const minScore = Math.min(...scores);
-  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const spread = maxScore - minScore;
-  const highCount = scores.filter((s) => s >= 0.7).length;
-
-  // 1. Provenance Verification
-  if (metadata.aiProvenancePresent) {
-    return {
-      type: 'full-synthetic',
-      title: 'C2PA Verified: Generative AI',
-      description: `Cryptographic provenance metadata confirms image was created using AI software (${metadata.aiSoftwareName || 'Generative AI'}).`,
-      mediaType
-    };
-  }
-
-  if (metadata.c2paPresent) {
-    return {
-      type: 'likely-real',
-      title: 'C2PA Credentials Verified',
-      description: 'Contains valid cryptographic provenance metadata confirming authentic origin.',
-      mediaType
-    };
-  }
-
-  // 2. High variance between regions (inpainting, composite, or localized generation)
-  if (patchScores.length > 1 && spread >= 0.40 && maxScore >= 0.70) {
-    const topPatch = patchScores.find((p) => p.aiScore === maxScore);
-    const lowPatch = patchScores.find((p) => p.aiScore === minScore);
-    const topLabel = topPatch?.position || 'one sample';
-    const lowLabel = lowPatch?.position || 'another sample';
-    const scoreDiff = `${Math.round(maxScore * 100)}% in ${topLabel} vs ${Math.round(minScore * 100)}% in ${lowLabel}`;
-
-    let divergenceDesc = `High divergence across regions (${scoreDiff}). `;
-    if (mediaType === 'digital-art') {
-      divergenceDesc += 'Indicator of localized generative inpainting, AI touch-ups, or composite artwork.';
-    } else if (mediaType === 'pen-ink-art') {
-      divergenceDesc += 'Indicator of localized digital editing or generative inpainting on manual artwork.';
-    } else if (mediaType === 'screen-capture') {
-      divergenceDesc += 'Indicator of localized AI inpainting, digital editing, or contrast between rendered elements and interface text.';
-    } else if (mediaType === 'camera-photo') {
-      divergenceDesc += 'Strong indicator of inpainting, composite, or face-swap.';
-    } else {
-      divergenceDesc += 'Strong indicator of localized AI inpainting, generative fill, or composite edit.';
-    }
-
-    return {
-      type: 'localized-edit',
-      title: 'Localized AI Alteration Detected',
-      description: divergenceDesc,
-      mediaType
-    };
-  }
-
-  // 3. Uniformly High AI Probability across sampled crops
-  if (highCount === patchScores.length || (avgScore >= 0.75 && minScore >= 0.50)) {
-    if (mediaType === 'digital-art') {
-      return {
-        type: 'full-synthetic',
-        title: 'AI-Generated Synthetic Artwork',
-        description: 'Consistent generative AI patterns and synthetic textures detected across all sampled regions (likely Midjourney / Niji, NovelAI, or Stable Diffusion).',
-        mediaType
-      };
-    }
-
-    if (mediaType === 'pen-ink-art') {
-      return {
-        type: 'full-synthetic',
-        title: 'AI-Generated Synthetic Drawing',
-        description: 'Consistent generative AI patterns and synthetic line artifacts detected across all sampled regions.',
-        mediaType
-      };
-    }
-
-    if (mediaType === 'screen-capture') {
-      return {
-        type: 'full-synthetic',
-        title: 'AI-Generated Synthetic Media',
-        description: 'Consistent generative AI diffusion patterns detected across all sampled regions.',
-        mediaType
-      };
-    }
-
-    return {
-      type: 'full-synthetic',
-      title: 'Uniform Synthetic Artifacts',
-      description: 'Consistent diffusion textures and frequency anomalies detected across all sampled regions (likely Midjourney, SDXL, or Flux).',
-      mediaType
-    };
-  }
-
-  // 4. Low AI Probability across sampled regions (Authentic non-AI media)
-  if (maxScore < 0.30 || (avgScore < 0.30 && maxScore < 0.50)) {
-    if (mediaType === 'pen-ink-art') {
-      return {
-        type: 'likely-real',
-        title: 'Authentic Hand-Drawn Artwork / Sketch',
-        description: 'Natural hand-drawn stroke variation and physical paper texture verified across sampled regions. Manual line work and hatching confirmed non-synthetic.',
-        mediaType
-      };
-    }
-
-    if (mediaType === 'digital-art') {
-      return {
-        type: 'likely-real',
-        title: 'Authentic Digital Artwork',
-        description: 'No generative AI synthesis artifacts detected across sampled regions. Consistent with human-drawn illustration, digital painting, or graphic design.',
-        mediaType
-      };
-    }
-
-    if (mediaType === 'screen-capture') {
-      return {
-        type: 'likely-real',
-        title: 'Authentic Screen Capture',
-        description: 'No generative AI diffusion artifacts detected across sampled regions. Consistent with an authentic screen capture or digital interface.',
-        mediaType
-      };
-    }
-
-    if (mediaType === 'graphic-or-ui') {
-      return {
-        type: 'likely-real',
-        title: 'Authentic Graphic / UI Media',
-        description: 'No generative AI patterns detected. Consistent with vector artwork, application UI capture, or digital graphic design.',
-        mediaType
-      };
-    }
-
-    if (mediaType === 'camera-photo') {
-      const camInfo = metadata.cameraModel ? ` (${metadata.cameraModel})` : '';
-      return {
-        type: 'likely-real',
-        title: metadata.cameraModel ? 'Authentic Camera Photograph' : 'Authentic Photographic Capture',
-        description: metadata.cameraModel
-          ? `Natural optical capture characteristics and camera hardware metadata verified${camInfo}.`
-          : 'No generative AI diffusion patterns detected across sampled regions. Consistent with an authentic camera photograph.',
-        mediaType
-      };
-    }
-
-    return {
-      type: 'likely-real',
-      title: 'Authentic Non-AI Content',
-      description: 'No generative AI diffusion patterns or synthetic anomalies detected across sampled regions.',
-      mediaType
-    };
-  }
-
-  // 5. Mixed / Subtle / Filtered
-  const avgPct = Math.round(avgScore * 100);
-  let ambiguousDesc = `Average AI confidence of ${avgPct}%. `;
-
-  if (mediaType === 'screen-capture') {
-    ambiguousDesc += 'Inconclusive signals; likely caused by display rendering, antialiasing, or compression artifacts.';
-  } else if (mediaType === 'pen-ink-art') {
-    ambiguousDesc += 'Inconclusive signals; manual cross-hatching lines and paper texture can mimic diffusion frequency patterns.';
-  } else if (mediaType === 'digital-art') {
-    ambiguousDesc += 'Inconclusive signals; likely caused by digital painting textures, stylized gradients, or compression artifacts.';
-  } else if (mediaType === 'graphic-or-ui') {
-    ambiguousDesc += 'Inconclusive signals; likely caused by rasterization filters or image compression.';
-  } else if (mediaType === 'camera-photo') {
-    ambiguousDesc += 'Moderate signals; may be a heavily processed, beauty-filtered, or upscaled photo.';
-  } else {
-    ambiguousDesc += 'Inconclusive signals; may be post-processed graphics, stylized digital art, upscaled media, or filtered photography.';
-  }
-
-  return {
-    type: 'ambiguous',
-    title: 'Subtle / Mixed Forensic Signals',
-    description: ambiguousDesc,
-    mediaType
-  };
+  map.set(getPatchCacheKey(box), score);
 }
 
 // Core image processing pipeline for both blobs, buffers, and URLs
@@ -410,10 +257,11 @@ async function processImageBlob(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
-  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid)
-  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid, or directly from provided sampleBoxes)
+  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode, sampleBoxes);
 
   // 2. Extract EXIF / Metadata
   const metadata = await extractMetadata(blob);
@@ -436,8 +284,9 @@ async function processImageBlob(
     };
   }
 
-  // 3. Classify visual media type (camera photo, digital artwork, game screenshot, graphic UI)
-  const mediaType = detectMediaType(extraction.width, extraction.height, metadata, extraction.patches);
+  // 3. Ultra-fast System 1 Triage (<5ms)
+  const system1 = analyzeSystem1(extraction.width, extraction.height, metadata, extraction.patches);
+  const mediaType = system1.mediaType;
 
   // Adjust quality score for non-camera digital media or physical artwork scans
   if (
@@ -450,66 +299,110 @@ async function processImageBlob(
     metadata.qualityScore = Math.min(1.0, metadata.qualityScore + 0.3);
   }
 
-  // 4. Serialized ONNX model inference inside priority concurrency queue
+  // 4. Immediately broadcast progressive System 1 preliminary result to background/tabs
+  try {
+    chrome.runtime.sendMessage({
+      type: 'IMAGE_PRELIMINARY_RESULT',
+      imageUrl,
+      system1,
+      tabId
+    } as ExtensionMessage).catch(() => {});
+  } catch (e) {}
+
+  // 5. Check if System 1 can bypass expensive System 2 neural scan
+  // (e.g. cryptographically signed C2PA, provenance-flagged AI, or trivial flat vector UI)
+  if (system1.canBypassSystem2 && !isModal && sampleMode !== 'deep') {
+    const fused = fuseDecision(system1, [], metadata);
+    return {
+      imageUrl,
+      status: 'complete',
+      aiScore: fused.aiScore,
+      patchScores: fused.patchScores,
+      metadata,
+      timestamp: Date.now(),
+      reasoning: fused.reasoning,
+      mediaType,
+      system1,
+      supportsDeepSampling: extraction.supportsDeepSampling,
+      deepGrid: extraction.deepGrid,
+      currentGrid: extraction.currentGrid,
+      sampleMode: extraction.sampleMode,
+      imageWidth: extraction.width,
+      imageHeight: extraction.height
+    };
+  }
+
+  // 6. Serialized ONNX System 2 neural model inference inside priority concurrency queue
   return queue.run(
     async () => {
-      const patchCanvases = extraction.patches.map((p) => p.canvas);
-      const patchScoresList = await runBatchedPatchInference(patchCanvases);
+      // Check cache for already evaluated patches (e.g. Center patch from fast mode or standard mode)
+      const uncomputedPatches: { index: number; canvas: HTMLCanvasElement }[] = [];
+      const patchScoresList: number[] = new Array(extraction.patches.length);
 
-      const patchScores: PatchResult[] = extraction.patches.map((patch, i) => {
-        let rawScore = patchScoresList[i] ?? 0.5;
-        if (mediaType === 'pen-ink-art' && !metadata.aiProvenancePresent) {
-          // Hand-drawn sketch / pen & ink artwork on physical paper:
-          // Diffusion models trained on photographs exhibit severe false-positive frequency spikes
-          // on manual cross-hatching and high-contrast ink-on-paper strokes.
-          rawScore = Math.min(0.08, rawScore * 0.08);
+      extraction.patches.forEach((p, i) => {
+        const cached = getCachedPatchScore(imageUrl, p.box);
+        if (cached !== undefined) {
+          patchScoresList[i] = cached;
+        } else {
+          uncomputedPatches.push({ index: i, canvas: p.canvas });
         }
+      });
+
+      if (uncomputedPatches.length > 0) {
+        const uncomputedScores = await runBatchedPatchInference(uncomputedPatches.map((u) => u.canvas));
+        uncomputedPatches.forEach((u, j) => {
+          const score = uncomputedScores[j] ?? 0.5;
+          patchScoresList[u.index] = score;
+          setCachedPatchScore(imageUrl, extraction.patches[u.index].box, score);
+        });
+      }
+
+      const rawPatchScores: PatchResult[] = extraction.patches.map((patch, i) => {
+        const periodicity = detectPatchPeriodicity(patch.canvas);
         return {
           patchIndex: patch.patchIndex,
           position: patch.position,
-          aiScore: rawScore,
-          box: patch.box
+          aiScore: patchScoresList[i] ?? 0.5,
+          box: patch.box,
+          hasPattern: periodicity.hasRepetitivePattern,
+          patternPeriodicity: periodicity.patternPeriodicity
         };
       });
 
-      // Aggregate overall score
-      const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
-      const minPatchScore = Math.min(...patchScores.map((p) => p.aiScore));
-      const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
-      const spread = maxPatchScore - minPatchScore;
-
-      let baseScore: number;
-      if (metadata.aiProvenancePresent) {
-        baseScore = 0.99;
-      } else if (mediaType === 'pen-ink-art') {
-        // Physical hand-drawn sketch / pen & ink artwork on paper
-        baseScore = minPatchScore < 0.05 ? 0.04 : 0.06;
-      } else if (patchScores.length > 1 && spread >= 0.40 && maxPatchScore >= 0.70) {
-        // Confirmed localized alteration (e.g. inpainting or face-swap in one specific patch)
-        baseScore = maxPatchScore * 0.5 + avgPatchScore * 0.5;
-      } else if (patchScores.length > 1) {
-        // Multi-region sample: average represents the true overall image verdict
-        baseScore = avgPatchScore;
-      } else {
-        baseScore = maxPatchScore;
+      // Retrieve any OTHER previously evaluated patches for this image from cache
+      // (e.g. the 4 Rule-of-Thirds power points if upgrading from Standard to Deep)
+      // so the Bayesian Decision Engine preserves all unique spatial observations across the canvas!
+      const allEvaluatedPatches: PatchResult[] = [...rawPatchScores];
+      const cachedMap = imagePatchScoreCache.get(imageUrl);
+      if (cachedMap && extraction.sampleMode === 'deep') {
+        const currentKeys = new Set(rawPatchScores.map((p) => getPatchCacheKey(p.box)));
+        let extraIdx = rawPatchScores.length;
+        cachedMap.forEach((score, key) => {
+          if (!currentKeys.has(key)) {
+            const [x, y, w, h] = key.split('_').map((n) => Number(n) / 1000);
+            allEvaluatedPatches.push({
+              patchIndex: extraIdx++,
+              position: `Sample #${extraIdx}`,
+              aiScore: score,
+              box: { x, y, width: w, height: h }
+            });
+          }
+        });
       }
 
-      if (metadata.c2paPresent && !metadata.aiProvenancePresent) {
-        baseScore = Math.max(0.01, baseScore - 0.3);
-      }
-
-      const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
-      const reasoning = generateForensicReasoning(patchScores, metadata, mediaType);
+      // 7. System 1 + System 2 Decision & Evidence Fusion
+      const fused = fuseDecision(system1, allEvaluatedPatches, metadata);
 
       return {
         imageUrl,
         status: 'complete',
-        aiScore: aggregatedScore,
-        patchScores,
+        aiScore: fused.aiScore,
+        patchScores: rawPatchScores,
         metadata,
         timestamp: Date.now(),
-        reasoning,
+        reasoning: fused.reasoning,
         mediaType,
+        system1,
         supportsDeepSampling: extraction.supportsDeepSampling,
         deepGrid: extraction.deepGrid,
         currentGrid: extraction.currentGrid,
@@ -532,11 +425,12 @@ async function processImageBuffer(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
   const uint8Array = new Uint8Array(buffer);
   const blob = new Blob([uint8Array], { type: contentType });
-  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode, sampleBoxes);
 }
 
 // Process an incoming image URL directly in offscreen without IPC serialization overhead
@@ -545,7 +439,8 @@ async function processImageUrl(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
@@ -568,7 +463,7 @@ async function processImageUrl(
     clearTimeout(timeoutId);
   }
 
-  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode, sampleBoxes);
 }
 
 // Listen for background service worker requests
@@ -590,7 +485,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.tabId,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleMode || 'standard'
+      message.sampleMode || 'standard',
+      message.sampleBoxes
     )
       .then((result) => {
         if (result) {
@@ -614,7 +510,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.tabId,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleMode || 'standard'
+      message.sampleMode || 'standard',
+      message.sampleBoxes
     )
       .then((result) => {
         if (result) {

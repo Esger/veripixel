@@ -14,6 +14,8 @@ export interface PatchResult {
   position: PatchPosition;
   aiScore: number;
   box?: PatchBox;
+  hasPattern?: boolean;
+  patternPeriodicity?: number;
 }
 
 export interface MetadataResult {
@@ -34,6 +36,33 @@ export interface GridDimensions {
 
 export type MediaType = 'camera-photo' | 'digital-art' | 'screen-capture' | 'graphic-or-ui' | 'pen-ink-art' | 'general-media';
 
+export interface System1Features {
+  textureRatio: number;
+  flatRatio: number;
+  subtleFlatRatio: number;
+  sharpEdgeRatio: number;
+  uniqueColorCount: number;
+  uniqueColorRatio: number;
+  highSaturationRatio: number;
+  lowSaturationRatio: number;
+  paperRatio: number;
+  inkRatio: number;
+  isPenAndInk: boolean;
+  hasCameraExif: boolean;
+  hasC2pa: boolean;
+  hasRepetitivePattern?: boolean;
+  patternRatio?: number;
+}
+
+export interface System1Result {
+  mediaType: MediaType;
+  priorAiScore: number; // 0.0 - 1.0 (Calibrated prior probability)
+  confidence: number; // 0.0 - 1.0 (Confidence in the System 1 classification)
+  summary: string; // Human-readable summary for instant tooltip
+  canBypassSystem2: boolean; // True if confident authentic camera EXIF/C2PA or pure flat vector UI
+  features: System1Features;
+}
+
 export interface ForensicReasoning {
   type: 'full-synthetic' | 'localized-edit' | 'likely-real' | 'ambiguous';
   title: string;
@@ -50,6 +79,7 @@ export interface AnalysisResult {
   timestamp: number;
   reasoning?: ForensicReasoning;
   mediaType?: MediaType;
+  system1?: System1Result;
   supportsDeepSampling?: boolean;
   deepGrid?: GridDimensions;
   currentGrid?: GridDimensions;
@@ -68,6 +98,7 @@ export interface ImageSummary {
   c2paPresent?: boolean;
   reasoningTitle?: string;
   mediaType?: MediaType;
+  system1Summary?: string;
 }
 
 export interface TabScanStats {
@@ -90,8 +121,15 @@ export type ExtensionMessage =
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
+      sampleBoxes?: PatchBox[];
     }
   | { type: 'IMAGE_ANALYSIS_RESULT'; result: AnalysisResult }
+  | {
+      type: 'IMAGE_PRELIMINARY_RESULT';
+      imageUrl: string;
+      system1: System1Result;
+      tabId?: number;
+    }
   | { type: 'CANCEL_BACKGROUND_ANALYSIS' }
   | { type: 'SET_ACTIVE_TAB'; activeTabId: number }
   | { type: 'CANCEL_TAB_TASKS'; tabId: number }
@@ -103,6 +141,7 @@ export type ExtensionMessage =
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
+      sampleBoxes?: PatchBox[];
     }
   | {
       type: 'PROCESS_IMAGE_BUFFER';
@@ -113,6 +152,7 @@ export type ExtensionMessage =
       priority?: 'high' | 'normal' | 'background';
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
+      sampleBoxes?: PatchBox[];
     }
   | { type: 'GET_PAGE_STATS' }
   | { type: 'PAGE_STATS_RESULT'; stats: { total: number; analyzed: number; aiDetected: number } }
@@ -132,6 +172,7 @@ export type ExtensionMessage =
       isModal?: boolean;
       sampleMode?: 'fast' | 'standard' | 'deep';
       forceRescan?: boolean;
+      sampleBoxes?: PatchBox[];
     }
   | { type: 'GLOBAL_STATE_CHANGED'; enabled: boolean }
   | { type: 'GET_GLOBAL_STATE' }

@@ -87,19 +87,7 @@ function createImageCardElement(img: ImageSummary): HTMLElement {
     verdictClass = 'popupView__verdictBadge--edited';
     badgeLabel = 'Edited';
   } else {
-    if (img.mediaType === 'pen-ink-art') {
-      badgeLabel = 'Drawing';
-    } else if (img.mediaType === 'digital-art') {
-      badgeLabel = 'Artwork';
-    } else if (img.mediaType === 'screen-capture') {
-      badgeLabel = 'Screenshot';
-    } else if (img.mediaType === 'graphic-or-ui') {
-      badgeLabel = 'Graphic';
-    } else if (img.mediaType === 'camera-photo') {
-      badgeLabel = 'Photo';
-    } else {
-      badgeLabel = 'Authentic';
-    }
+    badgeLabel = 'Authentic';
   }
 
   const thumb = document.createElement('img');
@@ -133,26 +121,6 @@ function createImageCardElement(img: ImageSummary): HTMLElement {
     cameraTag.className = 'popupView__cameraTag';
     cameraTag.textContent = img.cameraModel;
     tagGroup.appendChild(cameraTag);
-  } else if (img.mediaType === 'pen-ink-art') {
-    const mediaTag = document.createElement('span');
-    mediaTag.className = 'popupView__cameraTag';
-    mediaTag.textContent = 'Drawing';
-    tagGroup.appendChild(mediaTag);
-  } else if (img.mediaType === 'screen-capture') {
-    const mediaTag = document.createElement('span');
-    mediaTag.className = 'popupView__cameraTag';
-    mediaTag.textContent = 'Screenshot';
-    tagGroup.appendChild(mediaTag);
-  } else if (img.mediaType === 'digital-art') {
-    const mediaTag = document.createElement('span');
-    mediaTag.className = 'popupView__cameraTag';
-    mediaTag.textContent = 'Digital Art';
-    tagGroup.appendChild(mediaTag);
-  } else if (img.mediaType === 'graphic-or-ui') {
-    const mediaTag = document.createElement('span');
-    mediaTag.className = 'popupView__cameraTag';
-    mediaTag.textContent = 'Graphic';
-    tagGroup.appendChild(mediaTag);
   }
 
   const titleEl = document.createElement('div');
