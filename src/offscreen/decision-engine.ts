@@ -57,7 +57,7 @@ export function fuseDecision(
       reasoning: {
         type: 'likely-real',
         title: 'C2PA Credentials Verified',
-        description: 'Contains valid cryptographic provenance metadata confirming authentic origin.',
+        description: 'Contains valid cryptographic provenance metadata confirming verified capture origin.',
         mediaType
       }
     };
@@ -71,7 +71,7 @@ export function fuseDecision(
       patchScores: rawPatchScores,
       reasoning: {
         type: 'likely-real',
-        title: mediaType === 'graphic-or-ui' ? 'Authentic Graphic / UI Media' : 'Authentic Media',
+        title: mediaType === 'graphic-or-ui' ? 'Graphic / UI Media (No AI signs)' : 'Non-AI Media (No AI signs)',
         description: system1.summary,
         mediaType
       }
@@ -291,12 +291,12 @@ function buildForensicReasoning(
     };
   }
 
-  // Authentic / Likely Real verdict (score < 0.30)
+  // No AI signs / Likely Real verdict (score < 0.30)
   if (finalScore < 0.30) {
     if (mediaType === 'pen-ink-art') {
       return {
         type: 'likely-real',
-        title: 'Authentic Hand-Drawn Artwork / Sketch',
+        title: 'Hand-Drawn Artwork / Sketch (No AI signs)',
         description: 'Natural hand-drawn stroke variation and physical paper texture verified across sampled regions. Manual line work and hatching confirmed non-synthetic.',
         mediaType
       };
@@ -304,7 +304,7 @@ function buildForensicReasoning(
     if (mediaType === 'digital-art') {
       return {
         type: 'likely-real',
-        title: 'Authentic Artwork / Painting',
+        title: 'Traditional / Digital Artwork (No AI signs)',
         description: 'No generative AI synthesis artifacts or provenance tags detected. Consistent with human artistic media (traditional painting, watercolor, illustration, or digital artwork).',
         mediaType
       };
@@ -312,15 +312,15 @@ function buildForensicReasoning(
     if (mediaType === 'screen-capture') {
       return {
         type: 'likely-real',
-        title: 'Authentic Screen Capture',
-        description: 'No generative AI diffusion artifacts detected across sampled regions. Consistent with an authentic screen capture or digital interface.',
+        title: 'Screen Capture (No AI signs)',
+        description: 'No generative AI diffusion artifacts detected across sampled regions. Consistent with a standard screen capture or digital interface.',
         mediaType
       };
     }
     if (mediaType === 'graphic-or-ui') {
       return {
         type: 'likely-real',
-        title: 'Authentic Graphic / UI Media',
+        title: 'Graphic / UI Media (No AI signs)',
         description: 'No generative AI patterns detected. Consistent with vector artwork, application UI capture, or digital graphic design.',
         mediaType
       };
@@ -332,16 +332,16 @@ function buildForensicReasoning(
         : '';
       return {
         type: 'likely-real',
-        title: metadata.cameraModel ? 'Authentic Camera Photograph' : 'Authentic Photographic Capture',
+        title: metadata.cameraModel ? 'Camera Photograph (No AI signs)' : 'Natural Photographic Capture',
         description: metadata.cameraModel
           ? `Natural optical capture characteristics and camera hardware metadata verified${camInfo}.${patternText}`
-          : `No generative AI diffusion patterns detected across sampled regions. Consistent with an authentic camera photograph.${patternText}`,
+          : `No generative AI diffusion patterns detected across sampled regions. Consistent with a camera photograph.${patternText}`,
         mediaType
       };
     }
     return {
       type: 'likely-real',
-      title: 'Authentic Non-AI Content',
+      title: 'No AI Signs Detected',
       description: 'No generative AI diffusion patterns or synthetic anomalies detected across sampled regions.',
       mediaType
     };

@@ -726,3 +726,13 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   border-left: 3px solid var(--sampleBorderColor, #10B981);
 }
+
+.detectorTooltip__disclaimer {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 9px;
+  color: #94A3B8;
+  text-align: center;
+  line-height: 1.3;
+}

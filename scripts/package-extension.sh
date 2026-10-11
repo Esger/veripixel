@@ -10,6 +10,7 @@ npm run build
 
 echo "Packaging $OUTPUT..."
 rm -f "$OUTPUT"
-(cd dist && zip -r "../$OUTPUT" . -x "*.DS_Store" -x "__MACOSX/*")
+export COPYFILE_DISABLE=1
+(cd dist && zip -r -X "../$OUTPUT" . -x "*.DS_Store" -x "*__MACOSX*" -x "*/__MACOSX/*" -x "._*")
 
 echo "Successfully packaged: $OUTPUT ($(du -h "$OUTPUT" | cut -f1 | tr -d ' '))"

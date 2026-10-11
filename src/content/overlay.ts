@@ -836,15 +836,15 @@ export function updateBadgePreliminary(targetEl: HTMLElement, _system1?: System1
     scoreText.textContent = '...';
   }
 
-  badgeEl.title = 'Running authenticity scan...';
+  badgeEl.title = 'Running AI detection scan...';
 
   tooltipEl.innerHTML = `
     <div class="detectorTooltip__preliminary">
-      <div class="detectorTooltip__preliminaryHeader">Authenticity Analysis</div>
-      <div class="detectorTooltip__preliminarySummary">Preliminary properties verified. Running deep scan...</div>
+      <div class="detectorTooltip__preliminaryHeader">AI Probability Analysis</div>
+      <div class="detectorTooltip__preliminarySummary">Analyzing visual characteristics and metadata...</div>
       <div class="detectorTooltip__preliminaryStatus">
         <span class="detectorBadge__dot detectorBadge__dot--loading"></span>
-        Running neural authenticity scan...
+        Running neural analysis...
       </div>
     </div>
   `;
@@ -887,16 +887,16 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 
   const scorePercent = Math.round(result.aiScore * 100);
   let statusModifier = 'lowAi';
-  let statusText = 'Likely Authentic';
+  let statusText = 'No AI Signs Found';
 
   if (scorePercent >= 70) {
     statusModifier = 'highAi';
-    statusText = 'High AI Probability';
+    statusText = 'Likely AI-Generated';
   } else if (scorePercent >= 30) {
     statusModifier = 'mediumAi';
-    statusText = result.reasoning?.type === 'localized-edit' ? 'Localized AI Alteration' : 'Possible AI/Edited';
+    statusText = result.reasoning?.type === 'localized-edit' ? 'Possible AI Alteration' : 'Possible AI Influence';
   } else {
-    statusText = 'Likely Authentic';
+    statusText = 'No AI Signs Found';
   }
 
   badgeEl.classList.remove('detectorBadge--preliminary', 'detectorBadge--lowAi', 'detectorBadge--mediumAi', 'detectorBadge--highAi');
@@ -910,13 +910,13 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     dotEl.classList.remove('detectorBadge__dot--loading');
   }
 
-  let conciseVerdict = 'Authentic';
+  let conciseVerdict = 'No AI Signs';
   if (scorePercent >= 70) {
-    conciseVerdict = 'AI Gen';
+    conciseVerdict = 'Likely AI';
   } else if (scorePercent >= 30) {
     conciseVerdict = result.reasoning?.type === 'localized-edit' ? 'Edited' : 'Possible AI';
   } else {
-    conciseVerdict = 'Authentic';
+    conciseVerdict = 'No AI Signs';
   }
 
   if (!verdictTextEl) {
@@ -1135,6 +1135,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     ${deepeningHtml}
     ${assessmentHtml}
     ${switchButtonHtml}
+    <div class="detectorTooltip__disclaimer">Probabilistic estimate based on on-device analysis</div>
   `;
 
   if (entry.hoverAbortController) {

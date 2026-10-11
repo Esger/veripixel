@@ -88,17 +88,17 @@
       </div>
 
       <div class="popupView__metricCard popupView__metricCard--fake">
-        <div class="popupView__metricLabel">AI Fake</div>
+        <div class="popupView__metricLabel">Likely AI</div>
         <div class="popupView__metricValue" id="metricAiFake">0</div>
       </div>
 
       <div class="popupView__metricCard popupView__metricCard--edited">
-        <div class="popupView__metricLabel">Edited</div>
+        <div class="popupView__metricLabel">Possible AI</div>
         <div class="popupView__metricValue" id="metricEdited">0</div>
       </div>
 
       <div class="popupView__metricCard popupView__metricCard--real">
-        <div class="popupView__metricLabel">Authentic</div>
+        <div class="popupView__metricLabel">No AI Signs</div>
         <div class="popupView__metricValue" id="metricReal">0</div>
       </div>
     </div>
@@ -121,6 +121,9 @@
     <button class="popupView__rescanBtn" id="rescanBtn">
       <span>🔄</span> Re-scan Current Page
     </button>
+    <div class="popupView__disclaimer">
+      Results are probabilistic estimates based on local on-device analysis.
+    </div>
   </div>
 
   <script type="module" src="./popup.ts"></script>
