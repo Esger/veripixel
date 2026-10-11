@@ -2,23 +2,25 @@ import { ExtensionMessage, AnalysisResult, TabScanStats, ImageSummary } from '..
 import { logger } from './logger';
 
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen/offscreen.html';
+const CACHE_VERSION = 'v2';
 
 // Cache for results in session storage using SHA-256 hash keys to prevent quota exhaustion from data URLs
-async function getCacheKey(url: string): Promise<string> {
-  if (url.length > 128 || url.startsWith('data:')) {
-    const data = new TextEncoder().encode(url);
+async function getCacheKey(url: string, sampleMode?: string): Promise<string> {
+  const full = sampleMode ? `${url}::${sampleMode}` : url;
+  if (full.length > 128 || full.startsWith('data:')) {
+    const data = new TextEncoder().encode(full);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashHex = Array.from(new Uint8Array(hashBuffer))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
-    return `img_${hashHex}`;
+    return `${CACHE_VERSION}_img_${hashHex}`;
   }
-  return `img_${url}`;
+  return `${CACHE_VERSION}_img_${full}`;
 }
 
-async function getCachedResult(url: string): Promise<AnalysisResult | null> {
+async function getCachedResult(url: string, sampleMode?: string): Promise<AnalysisResult | null> {
   try {
-    const key = await getCacheKey(url);
+    const key = await getCacheKey(url, sampleMode);
     const data = await chrome.storage.session.get(key);
     return (data[key] as AnalysisResult) || null;
   } catch (e) {
@@ -29,8 +31,13 @@ async function getCachedResult(url: string): Promise<AnalysisResult | null> {
 
 async function setCachedResult(url: string, result: AnalysisResult): Promise<void> {
   try {
-    const key = await getCacheKey(url);
-    await chrome.storage.session.set({ [key]: result });
+    const defaultKey = await getCacheKey(url);
+    const toStore: Record<string, AnalysisResult> = { [defaultKey]: result };
+    if (result.sampleMode) {
+      const modeKey = await getCacheKey(url, result.sampleMode);
+      toStore[modeKey] = result;
+    }
+    await chrome.storage.session.set(toStore);
   } catch (e) {
     logger.warn('[Background] Failed to set cached result:', e);
   }
@@ -119,10 +126,30 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
 // Per-tab scan statistics with chrome.storage.session persistence to survive MV3 30s service worker shutdowns
 const tabStatsMap = new Map<number, TabScanStats>();
 const tabStatsLoadingMap = new Map<number, Promise<TabScanStats>>();
+const inFlightScansPerTab = new Map<number, number>();
+
+function startInFlightScan(tabId: number): void {
+  const current = inFlightScansPerTab.get(tabId) || 0;
+  inFlightScansPerTab.set(tabId, current + 1);
+}
+
+function finishInFlightScan(tabId: number): boolean {
+  const current = inFlightScansPerTab.get(tabId) || 1;
+  const remaining = Math.max(0, current - 1);
+  if (remaining === 0) {
+    inFlightScansPerTab.delete(tabId);
+    return false;
+  }
+  inFlightScansPerTab.set(tabId, remaining);
+  return true;
+}
 
 export async function getOrCreateTabStats(tabId: number): Promise<TabScanStats> {
   const memoryStats = tabStatsMap.get(tabId);
-  if (memoryStats) return memoryStats;
+  if (memoryStats) {
+    memoryStats.isScanning = (inFlightScansPerTab.get(tabId) || 0) > 0;
+    return memoryStats;
+  }
 
   const pending = tabStatsLoadingMap.get(tabId);
   if (pending) return await pending;
@@ -132,6 +159,7 @@ export async function getOrCreateTabStats(tabId: number): Promise<TabScanStats> 
       const stored = await chrome.storage.session.get(`tab_${tabId}`);
       if (stored && stored[`tab_${tabId}`]) {
         const stats = stored[`tab_${tabId}`] as TabScanStats;
+        stats.isScanning = (inFlightScansPerTab.get(tabId) || 0) > 0;
         tabStatsMap.set(tabId, stats);
         return stats;
       }
@@ -143,7 +171,7 @@ export async function getOrCreateTabStats(tabId: number): Promise<TabScanStats> 
       aiDetected: 0,
       suspectedAi: 0,
       likelyReal: 0,
-      isScanning: false,
+      isScanning: (inFlightScansPerTab.get(tabId) || 0) > 0,
       images: []
     };
     tabStatsMap.set(tabId, newStats);
@@ -183,25 +211,44 @@ const OFF_ICONS = {
 };
 
 let isExtensionEnabled = true;
+let isExtensionEnabledResolved = false;
 
 // Load persisted state from chrome.storage.local on startup
-chrome.storage.local.get('extensionEnabled', (res) => {
-  if (res && typeof res.extensionEnabled === 'boolean') {
-    isExtensionEnabled = res.extensionEnabled;
-  } else {
-    isExtensionEnabled = true;
-    chrome.storage.local.set({ extensionEnabled: true });
-  }
-  updateGlobalToolbarState();
+const extensionEnabledReady = new Promise<boolean>((resolve) => {
+  chrome.storage.local.get('extensionEnabled', (res) => {
+    if (res && typeof res.extensionEnabled === 'boolean') {
+      isExtensionEnabled = res.extensionEnabled;
+    } else {
+      isExtensionEnabled = true;
+      chrome.storage.local.set({ extensionEnabled: true });
+    }
+    isExtensionEnabledResolved = true;
+    updateGlobalToolbarState();
+    resolve(isExtensionEnabled);
+  });
 });
 
 // React to state changes from popup or background
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.extensionEnabled) {
-    isExtensionEnabled = changes.extensionEnabled.newValue;
+  if (area === 'local' && changes.extensionEnabled !== undefined) {
+    isExtensionEnabled = Boolean(changes.extensionEnabled.newValue);
+    if (!isExtensionEnabled) {
+      inFlightScansPerTab.clear();
+      for (const stats of tabStatsMap.values()) {
+        stats.isScanning = false;
+        saveTabStats(stats).catch(() => {});
+        broadcastTabStatsUpdate(stats);
+      }
+    }
     updateGlobalToolbarState();
     broadcastGlobalState(isExtensionEnabled);
   }
+});
+
+// Clear stale session caches upon extension install or version update
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.session.clear().catch(() => {});
+  logger.log('[Background] Extension installed/updated, session cache cleared.');
 });
 
 function updateGlobalToolbarState(): void {
@@ -278,6 +325,7 @@ try {
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
   currentActiveTabId = activeInfo.tabId;
+  chrome.storage.session.set({ activeTabId: activeInfo.tabId }).catch(() => {});
   chrome.runtime.sendMessage({
     type: 'SET_ACTIVE_TAB',
     activeTabId: activeInfo.tabId
@@ -301,6 +349,7 @@ if (chrome.windows?.onFocusChanged) {
 // Clear stats, badge, and pending queue when a tab reloads or navigates
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
+    inFlightScansPerTab.delete(tabId);
     tabStatsMap.delete(tabId);
     chrome.storage.session.remove(`tab_${tabId}`).catch(() => {});
     if (chrome.action) {
@@ -315,6 +364,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 // Clean up memory and cancel tasks when a tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
+  inFlightScansPerTab.delete(tabId);
   tabStatsMap.delete(tabId);
   chrome.storage.session.remove(`tab_${tabId}`).catch(() => {});
   chrome.runtime.sendMessage({
@@ -331,19 +381,39 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     return false;
   }
 
+  if (message.type === 'IMAGE_PRELIMINARY_RESULT') {
+    const tabId = message.tabId;
+    if (tabId !== undefined) {
+      chrome.tabs.sendMessage(tabId, message).catch(() => {});
+    }
+    sendResponse({ status: 'ok' });
+    return false;
+  }
+
   if (message.type === 'ANALYZE_IMAGE' || message.type === 'ANALYZE_IMAGE_BUFFER') {
     (async () => {
       const tabId = sender.tab?.id;
       const imageUrl = message.imageUrl;
+      const dataUrl = 'dataUrl' in message ? message.dataUrl : undefined;
+      const targetInferenceUrl = dataUrl || imageUrl;
       const priority = message.priority || 'normal';
       const isModal = message.isModal || false;
       const requestedSampleMode = message.sampleMode || 'standard';
       const forceRescan = message.forceRescan || false;
+      const sampleBoxes = 'sampleBoxes' in message ? message.sampleBoxes : undefined;
+
+      if (tabId !== undefined) {
+        chrome.storage.session.set({ activeTabId: tabId }).catch(() => {});
+      }
 
       // Active tab tasks get normal/high priority; background tab tasks get background priority
       const isSenderActive = tabId !== undefined && currentActiveTabId !== null && tabId === currentActiveTabId;
       const effectivePriority: 'high' | 'normal' | 'background' =
         isModal || priority === 'high' ? 'high' : isSenderActive ? 'normal' : 'background';
+
+      if (!isExtensionEnabledResolved) {
+        await extensionEnabledReady;
+      }
 
       if (!isExtensionEnabled) {
         sendResponse({
@@ -363,34 +433,45 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
       try {
         if (tabId !== undefined) {
+          startInFlightScan(tabId);
           const stats = await getOrCreateTabStats(tabId);
+          const wasScanning = stats.isScanning;
           stats.isScanning = true;
-          await saveTabStats(stats);
-          updateTabToolbarBadge(tabId, stats);
-          broadcastTabStatsUpdate(stats);
+          if (!wasScanning) {
+            await saveTabStats(stats);
+            updateTabToolbarBadge(tabId, stats);
+            broadcastTabStatsUpdate(stats);
+          }
         }
 
         // Check cache first (unless forceRescan is requested or sampleMode differs)
         if (!forceRescan) {
-          const cached = await getCachedResult(imageUrl);
-          if (cached) {
-            const isCacheCompatible =
-              cached.sampleMode === requestedSampleMode ||
-              (!cached.sampleMode && requestedSampleMode === 'standard') ||
-              (requestedSampleMode === 'fast' && (cached.sampleMode === 'standard' || cached.sampleMode === 'deep'));
-
-            if (isCacheCompatible) {
-              if (tabId !== undefined) {
-                const stats = await getOrCreateTabStats(tabId);
-                stats.isScanning = false;
-                recordTabImageResult(stats, cached);
-                await saveTabStats(stats);
-                updateTabToolbarBadge(tabId, stats);
-                broadcastTabStatsUpdate(stats);
+          let cached = await getCachedResult(imageUrl, requestedSampleMode);
+          if (!cached) {
+            const latestCached = await getCachedResult(imageUrl);
+            if (latestCached) {
+              const isCacheCompatible =
+                latestCached.sampleMode === requestedSampleMode ||
+                (!latestCached.sampleMode && requestedSampleMode === 'standard') ||
+                (requestedSampleMode === 'fast' && (latestCached.sampleMode === 'standard' || latestCached.sampleMode === 'deep'));
+              if (isCacheCompatible) {
+                cached = latestCached;
               }
-              sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
-              return;
             }
+          }
+
+          if (cached) {
+            if (tabId !== undefined) {
+              const stillScanning = finishInFlightScan(tabId);
+              const stats = await getOrCreateTabStats(tabId);
+              stats.isScanning = stillScanning;
+              recordTabImageResult(stats, cached);
+              await saveTabStats(stats);
+              updateTabToolbarBadge(tabId, stats);
+              broadcastTabStatsUpdate(stats);
+            }
+            sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: cached });
+            return;
           }
         }
 
@@ -406,15 +487,18 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
                 tabId,
                 priority: effectivePriority,
                 isModal,
-                sampleMode: requestedSampleMode
+                sampleMode: requestedSampleMode,
+                sampleBoxes
               }
             : {
                 type: 'PROCESS_IMAGE_URL',
-                imageUrl,
+                imageUrl: targetInferenceUrl,
+                originalUrl: imageUrl,
                 tabId,
                 priority: effectivePriority,
                 isModal,
-                sampleMode: requestedSampleMode
+                sampleMode: requestedSampleMode,
+                sampleBoxes
               };
 
         let responseHandled = false;
@@ -423,8 +507,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
             responseHandled = true;
             logger.warn('[Background] Offscreen processing timed out (45s) for:', imageUrl);
             if (tabId !== undefined) {
+              const stillScanning = finishInFlightScan(tabId);
               const stats = await getOrCreateTabStats(tabId);
-              stats.isScanning = false;
+              stats.isScanning = stillScanning;
               await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
@@ -454,10 +539,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           }
 
           if (response && response.result) {
+            response.result.imageUrl = imageUrl;
             await setCachedResult(imageUrl, response.result);
             if (tabId !== undefined) {
+              const stillScanning = finishInFlightScan(tabId);
               const stats = await getOrCreateTabStats(tabId);
-              stats.isScanning = false;
+              stats.isScanning = stillScanning;
               recordTabImageResult(stats, response.result);
               await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
@@ -466,8 +553,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
             sendResponse({ type: 'IMAGE_ANALYSIS_RESULT', result: response.result });
           } else if (response && response.cancelled) {
             if (tabId !== undefined) {
+              const stillScanning = finishInFlightScan(tabId);
               const stats = await getOrCreateTabStats(tabId);
-              stats.isScanning = false;
+              stats.isScanning = stillScanning;
               await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
@@ -485,8 +573,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
             });
           } else {
             if (tabId !== undefined) {
+              const stillScanning = finishInFlightScan(tabId);
               const stats = await getOrCreateTabStats(tabId);
-              stats.isScanning = false;
+              stats.isScanning = stillScanning;
               await saveTabStats(stats);
               updateTabToolbarBadge(tabId, stats);
               broadcastTabStatsUpdate(stats);
@@ -508,8 +597,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       } catch (err) {
         logger.error('[Background] Error handling image analysis:', err);
         if (tabId !== undefined) {
+          const stillScanning = finishInFlightScan(tabId);
           const stats = await getOrCreateTabStats(tabId);
-          stats.isScanning = false;
+          stats.isScanning = stillScanning;
           await saveTabStats(stats);
           updateTabToolbarBadge(tabId, stats);
           broadcastTabStatsUpdate(stats);
@@ -593,6 +683,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
   if (message.type === 'SET_GLOBAL_STATE') {
     isExtensionEnabled = message.enabled;
+    if (!isExtensionEnabled) {
+      inFlightScansPerTab.clear();
+      for (const stats of tabStatsMap.values()) {
+        stats.isScanning = false;
+        saveTabStats(stats).catch(() => {});
+        broadcastTabStatsUpdate(stats);
+      }
+    }
     chrome.storage.local.set({ extensionEnabled: message.enabled }, () => {
       updateGlobalToolbarState();
       broadcastGlobalState(message.enabled);
@@ -608,24 +706,32 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 function recordTabImageResult(stats: TabScanStats, result: AnalysisResult): void {
   if (result.status !== 'complete') return;
 
+  let displayUrl = result.imageUrl;
+  // If imageUrl is a raw base64 data string, do NOT store 500KB strings in session storage
+  if (displayUrl.startsWith('data:') && displayUrl.length > 512) {
+    displayUrl = '';
+  }
+
   const summaryItem: ImageSummary = {
-    imageUrl: result.imageUrl,
+    imageUrl: displayUrl,
     aiScore: result.aiScore,
     status: result.status,
     timestamp: result.timestamp,
     cameraModel: result.metadata.cameraModel,
     c2paPresent: result.metadata.c2paPresent,
-    reasoningTitle: result.reasoning?.title
+    reasoningTitle: result.reasoning?.title,
+    mediaType: result.mediaType || result.reasoning?.mediaType,
+    system1Summary: result.system1?.summary
   };
 
-  const existingIdx = stats.images.findIndex((img) => img.imageUrl === result.imageUrl);
+  const existingIdx = stats.images.findIndex((img) => img.imageUrl === displayUrl && displayUrl !== '');
   if (existingIdx >= 0) {
     stats.images[existingIdx] = summaryItem;
   } else {
     stats.images.unshift(summaryItem);
-    // Cap images at 100 entries to protect session storage quota
-    if (stats.images.length > 100) {
-      stats.images.length = 100;
+    // Cap images at 30 entries to protect session storage quota and ensure instant popup rendering
+    if (stats.images.length > 30) {
+      stats.images.length = 30;
     }
   }
 

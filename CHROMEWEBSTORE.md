@@ -18,13 +18,13 @@ Tired of wondering if a viral photo, news image, or social media post is authent
 HOW IT WORKS
 1. Browse normally — VeriPixel automatically monitors visible images on the page.
 2. A subtle authenticity badge appears in the corner of images above thumbnail size.
-3. The badge displays an authenticity assessment (from authentic photo to high AI likelihood).
-4. Click any completed badge to open an interactive forensic inspection popover with in-depth patch scores, EXIF camera metadata, and manipulation analysis.
+3. The badge displays an authenticity assessment (from authentic photos and artwork to high AI likelihood).
+4. Click any completed badge to open an interactive forensic inspection popover with in-depth patch scores, media source classification, EXIF camera metadata, and manipulation analysis.
 
 KEY FEATURES
 • Real-Time Visual Badges — Automatically scans images above thumbnail size (120×120px) without disrupting page layout.
 • Regional Deepening & Heatmaps — Divides images into multiple patches to detect localized edits like inpainting, face-swaps, and composite photo manipulation alongside full-frame generations (Midjourney, DALL-E, Stable Diffusion, Flux).
-• Forensic Insights — Classifies signals into clear categories: Uniform Synthetic Artifacts, Localized Inpainting / Swap, Authentic Photographic Texture, or Ambiguous/Filtered.
+• Forensic Insights — Classifies signals into clear, media-aware categories: Uniform Synthetic Artifacts, Localized Alterations, Authentic Digital Artwork, Screen Captures / Screenshots, Authentic Camera Photos, or Ambiguous/Filtered.
 • EXIF & Provenance Inspection — Reads embedded camera model, lens specifications, exposure parameters, software tags, and C2PA credentials.
 • 100% Client-Side Privacy — Powered by ONNX Runtime Web with WASM SIMD running in an isolated Offscreen Document. No photos, URLs, or browsing history are ever uploaded to external servers.
 • Fast & Lightweight — Uses an optimized fast-pass pipeline that displays initial verdicts in milliseconds without slowing down your browser.

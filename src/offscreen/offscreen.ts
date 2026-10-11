@@ -1,7 +1,16 @@
 import exifr from 'exifr';
-import { AnalysisResult, MetadataResult, PatchResult, ForensicReasoning } from '../shared/types';
+import {
+  AnalysisResult,
+  MetadataResult,
+  PatchResult,
+  PatchBox,
+  ExtensionMessage
+} from '../shared/types';
 import { extractRuleOfThirdsPatches } from './patch-extractor';
 import { runBatchedPatchInference } from './model-runner';
+import { analyzeSystem1 } from './system1-analyzer';
+import { detectPatchPeriodicity } from './media-detector';
+import { fuseDecision } from './decision-engine';
 import { logger } from './logger';
 // Suppress internal ONNX runtime/emscripten warnings from being logged to console.error
 // so that Chrome's extension manager does not collect them as extension errors.
@@ -176,7 +185,16 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
 
     // Check for C2PA or software signatures
     const softwareStr = (exifData?.Software || '').toLowerCase();
-    const c2paPresent = softwareStr.includes('c2pa') || softwareStr.includes('firefly');
+    const isAiSoftware =
+      softwareStr.includes('firefly') ||
+      softwareStr.includes('midjourney') ||
+      softwareStr.includes('stable diffusion') ||
+      softwareStr.includes('dall-e') ||
+      softwareStr.includes('comfyui') ||
+      softwareStr.includes('novelai');
+
+    const aiSoftwareName = isAiSoftware ? exifData?.Software : undefined;
+    const c2paPresent = softwareStr.includes('c2pa') || isAiSoftware;
 
     let qualityScore = 1.0;
     if (!exifPresent) qualityScore -= 0.3;
@@ -186,6 +204,8 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
       exifPresent,
       cameraModel,
       c2paPresent,
+      aiProvenancePresent: isAiSoftware,
+      aiSoftwareName,
       estimatedCompressionGenerations: exifPresent ? 1 : 2,
       qualityScore: Math.max(0, qualityScore)
     };
@@ -198,75 +218,36 @@ async function extractMetadata(blob: Blob): Promise<MetadataResult> {
   }
 }
 
-/**
- * Synthesizes multi-patch scores and forensic metadata into actionable natural language reasoning.
- */
-function generateForensicReasoning(
-  patchScores: PatchResult[],
-  metadata: MetadataResult
-): ForensicReasoning {
-  if (patchScores.length === 0) {
-    return {
-      type: 'ambiguous',
-      title: 'Insufficient Data',
-      description: 'Image dimensions too small for multi-patch forensic analysis.'
-    };
+
+
+// In-memory cache for evaluated patch scores keyed by imageUrl and normalized box coordinates.
+// Ensures that center patches evaluated in Fast mode are reused directly when upgrading to Standard or Deep mode,
+// and previously evaluated Standard patches are preserved when Deep mode runs.
+const imagePatchScoreCache = new Map<string, Map<string, number>>();
+const MAX_CACHED_IMAGES = 60;
+
+function getPatchCacheKey(box?: PatchBox): string {
+  if (!box) return '0_0_0_0';
+  return `${Math.round(box.x * 1000)}_${Math.round(box.y * 1000)}_${Math.round(box.width * 1000)}_${Math.round(box.height * 1000)}`;
+}
+
+function getCachedPatchScore(imageUrl: string, box?: PatchBox): number | undefined {
+  const map = imagePatchScoreCache.get(imageUrl);
+  if (!map) return undefined;
+  return map.get(getPatchCacheKey(box));
+}
+
+function setCachedPatchScore(imageUrl: string, box: PatchBox | undefined, score: number): void {
+  let map = imagePatchScoreCache.get(imageUrl);
+  if (!map) {
+    if (imagePatchScoreCache.size >= MAX_CACHED_IMAGES) {
+      const oldestKey = imagePatchScoreCache.keys().next().value;
+      if (oldestKey) imagePatchScoreCache.delete(oldestKey);
+    }
+    map = new Map<string, number>();
+    imagePatchScoreCache.set(imageUrl, map);
   }
-
-  const scores = patchScores.map((p) => p.aiScore);
-  const maxScore = Math.max(...scores);
-  const minScore = Math.min(...scores);
-  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const spread = maxScore - minScore;
-  const highCount = scores.filter((s) => s >= 0.7).length;
-
-  // 1. C2PA Verified
-  if (metadata.c2paPresent) {
-    return {
-      type: 'likely-real',
-      title: 'C2PA Credentials Verified',
-      description: 'Contains valid cryptographic provenance metadata.'
-    };
-  }
-
-  // 2. High variance between regions (e.g. face-swap, inpainting, or composite)
-  if (patchScores.length > 1 && spread >= 0.40 && maxScore >= 0.70) {
-    const topPatch = patchScores.find((p) => p.aiScore === maxScore);
-    const lowPatch = patchScores.find((p) => p.aiScore === minScore);
-    const topLabel = topPatch?.position || 'one sample';
-    const lowLabel = lowPatch?.position || 'another sample';
-    return {
-      type: 'localized-edit',
-      title: 'Localized AI Alteration Detected',
-      description: `High divergence across regions (${Math.round(maxScore * 100)}% in ${topLabel} vs ${Math.round(minScore * 100)}% in ${lowLabel}). Strong indicator of inpainting, composite, or face-swap.`
-    };
-  }
-
-  // 3. Uniformly High AI Probability across all crops
-  if (highCount === patchScores.length || (avgScore >= 0.75 && minScore >= 0.50)) {
-    return {
-      type: 'full-synthetic',
-      title: 'Uniform Synthetic Artifacts',
-      description: 'Consistent diffusion textures and frequency anomalies detected across all sampled regions (likely Midjourney, SDXL, or Flux).'
-    };
-  }
-
-  // 4. Uniformly Low AI Probability (Authentic camera photo)
-  if (maxScore < 0.30) {
-    const camInfo = metadata.cameraModel ? ` (${metadata.cameraModel})` : '';
-    return {
-      type: 'likely-real',
-      title: 'Authentic Photographic Texture',
-      description: `Natural ISO sensor noise and optical lens characteristics verified across all regions${camInfo}.`
-    };
-  }
-
-  // 5. Mixed / Subtle / Filtered
-  return {
-    type: 'ambiguous',
-    title: 'Subtle / Mixed Forensic Signals',
-    description: `Average AI confidence of ${Math.round(avgScore * 100)}%. May be a heavily processed, beauty-filtered, or upscaled photo.`
-  };
+  map.set(getPatchCacheKey(box), score);
 }
 
 // Core image processing pipeline for both blobs, buffers, and URLs
@@ -276,10 +257,11 @@ async function processImageBlob(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
-  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid)
-  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode);
+  // 1. Extract patches (fast 1x1, standard 2x2 or deep grid, or directly from provided sampleBoxes)
+  const extraction = await extractRuleOfThirdsPatches(blob, 224, sampleMode, sampleBoxes);
 
   // 2. Extract EXIF / Metadata
   const metadata = await extractMetadata(blob);
@@ -302,39 +284,125 @@ async function processImageBlob(
     };
   }
 
-  // 3. Serialized ONNX model inference inside priority concurrency queue
+  // 3. Ultra-fast System 1 Triage (<5ms)
+  const system1 = analyzeSystem1(extraction.width, extraction.height, metadata, extraction.patches);
+  const mediaType = system1.mediaType;
+
+  // Adjust quality score for non-camera digital media or physical artwork scans
+  if (
+    (mediaType === 'digital-art' ||
+      mediaType === 'screen-capture' ||
+      mediaType === 'graphic-or-ui' ||
+      mediaType === 'pen-ink-art') &&
+    !metadata.cameraModel
+  ) {
+    metadata.qualityScore = Math.min(1.0, metadata.qualityScore + 0.3);
+  }
+
+  // 4. Immediately broadcast progressive System 1 preliminary result to background/tabs
+  try {
+    chrome.runtime.sendMessage({
+      type: 'IMAGE_PRELIMINARY_RESULT',
+      imageUrl,
+      system1,
+      tabId
+    } as ExtensionMessage).catch(() => {});
+  } catch (e) {}
+
+  // 5. Check if System 1 can bypass expensive System 2 neural scan
+  // (e.g. cryptographically signed C2PA, provenance-flagged AI, or trivial flat vector UI)
+  if (system1.canBypassSystem2 && !isModal && sampleMode !== 'deep') {
+    const fused = fuseDecision(system1, [], metadata);
+    return {
+      imageUrl,
+      status: 'complete',
+      aiScore: fused.aiScore,
+      patchScores: fused.patchScores,
+      metadata,
+      timestamp: Date.now(),
+      reasoning: fused.reasoning,
+      mediaType,
+      system1,
+      supportsDeepSampling: extraction.supportsDeepSampling,
+      deepGrid: extraction.deepGrid,
+      currentGrid: extraction.currentGrid,
+      sampleMode: extraction.sampleMode,
+      imageWidth: extraction.width,
+      imageHeight: extraction.height
+    };
+  }
+
+  // 6. Serialized ONNX System 2 neural model inference inside priority concurrency queue
   return queue.run(
     async () => {
-      const patchCanvases = extraction.patches.map((p) => p.canvas);
-      const patchScoresList = await runBatchedPatchInference(patchCanvases);
+      // Check cache for already evaluated patches (e.g. Center patch from fast mode or standard mode)
+      const uncomputedPatches: { index: number; canvas: HTMLCanvasElement }[] = [];
+      const patchScoresList: number[] = new Array(extraction.patches.length);
 
-      const patchScores: PatchResult[] = extraction.patches.map((patch, i) => ({
-        patchIndex: patch.patchIndex,
-        position: patch.position,
-        aiScore: patchScoresList[i] ?? 0.5,
-        box: patch.box
-      }));
+      extraction.patches.forEach((p, i) => {
+        const cached = getCachedPatchScore(imageUrl, p.box);
+        if (cached !== undefined) {
+          patchScoresList[i] = cached;
+        } else {
+          uncomputedPatches.push({ index: i, canvas: p.canvas });
+        }
+      });
 
-      // Aggregate overall score
-      const maxPatchScore = Math.max(...patchScores.map((p) => p.aiScore));
-      const avgPatchScore = patchScores.reduce((acc, p) => acc + p.aiScore, 0) / patchScores.length;
-
-      let baseScore = maxPatchScore * 0.6 + avgPatchScore * 0.4;
-      if (metadata.c2paPresent) {
-        baseScore = Math.max(0.01, baseScore - 0.3);
+      if (uncomputedPatches.length > 0) {
+        const uncomputedScores = await runBatchedPatchInference(uncomputedPatches.map((u) => u.canvas));
+        uncomputedPatches.forEach((u, j) => {
+          const score = uncomputedScores[j] ?? 0.5;
+          patchScoresList[u.index] = score;
+          setCachedPatchScore(imageUrl, extraction.patches[u.index].box, score);
+        });
       }
 
-      const aggregatedScore = parseFloat(Math.min(0.99, Math.max(0.01, baseScore)).toFixed(2));
-      const reasoning = generateForensicReasoning(patchScores, metadata);
+      const rawPatchScores: PatchResult[] = extraction.patches.map((patch, i) => {
+        const periodicity = detectPatchPeriodicity(patch.canvas);
+        return {
+          patchIndex: patch.patchIndex,
+          position: patch.position,
+          aiScore: patchScoresList[i] ?? 0.5,
+          box: patch.box,
+          hasPattern: periodicity.hasRepetitivePattern,
+          patternPeriodicity: periodicity.patternPeriodicity
+        };
+      });
+
+      // Retrieve any OTHER previously evaluated patches for this image from cache
+      // (e.g. the 4 Rule-of-Thirds power points if upgrading from Standard to Deep)
+      // so the Bayesian Decision Engine preserves all unique spatial observations across the canvas!
+      const allEvaluatedPatches: PatchResult[] = [...rawPatchScores];
+      const cachedMap = imagePatchScoreCache.get(imageUrl);
+      if (cachedMap && extraction.sampleMode === 'deep') {
+        const currentKeys = new Set(rawPatchScores.map((p) => getPatchCacheKey(p.box)));
+        let extraIdx = rawPatchScores.length;
+        cachedMap.forEach((score, key) => {
+          if (!currentKeys.has(key)) {
+            const [x, y, w, h] = key.split('_').map((n) => Number(n) / 1000);
+            allEvaluatedPatches.push({
+              patchIndex: extraIdx++,
+              position: `Sample #${extraIdx}`,
+              aiScore: score,
+              box: { x, y, width: w, height: h }
+            });
+          }
+        });
+      }
+
+      // 7. System 1 + System 2 Decision & Evidence Fusion
+      const fused = fuseDecision(system1, allEvaluatedPatches, metadata);
 
       return {
         imageUrl,
         status: 'complete',
-        aiScore: aggregatedScore,
-        patchScores,
+        aiScore: fused.aiScore,
+        patchScores: rawPatchScores,
         metadata,
         timestamp: Date.now(),
-        reasoning,
+        reasoning: fused.reasoning,
+        mediaType,
+        system1,
         supportsDeepSampling: extraction.supportsDeepSampling,
         deepGrid: extraction.deepGrid,
         currentGrid: extraction.currentGrid,
@@ -357,11 +425,12 @@ async function processImageBuffer(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
   const uint8Array = new Uint8Array(buffer);
   const blob = new Blob([uint8Array], { type: contentType });
-  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode, sampleBoxes);
 }
 
 // Process an incoming image URL directly in offscreen without IPC serialization overhead
@@ -370,7 +439,8 @@ async function processImageUrl(
   tabId?: number,
   priority: 'high' | 'normal' | 'background' = 'normal',
   isModal = false,
-  sampleMode: 'fast' | 'standard' | 'deep' = 'standard'
+  sampleMode: 'fast' | 'standard' | 'deep' = 'standard',
+  sampleBoxes?: PatchBox[]
 ): Promise<AnalysisResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s network fetch timeout
@@ -393,7 +463,7 @@ async function processImageUrl(
     clearTimeout(timeoutId);
   }
 
-  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode);
+  return processImageBlob(blob, imageUrl, tabId, priority, isModal, sampleMode, sampleBoxes);
 }
 
 // Listen for background service worker requests
@@ -415,10 +485,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.tabId,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleMode || 'standard'
+      message.sampleMode || 'standard',
+      message.sampleBoxes
     )
       .then((result) => {
         if (result) {
+          if (message.originalUrl) {
+            result.imageUrl = message.originalUrl;
+          }
           sendResponse({ result });
         } else {
           sendResponse({ cancelled: true });
@@ -436,7 +510,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message.tabId,
       message.priority || 'normal',
       message.isModal || false,
-      message.sampleMode || 'standard'
+      message.sampleMode || 'standard',
+      message.sampleBoxes
     )
       .then((result) => {
         if (result) {
