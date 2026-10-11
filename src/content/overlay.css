@@ -328,9 +328,12 @@
   padding: 3px 4px;
 }
 
-.detectorTooltip__patchItem:hover {
-  background: #334155;
-  transform: translateY(-1px);
+.detectorTooltip__patchItem:hover,
+.detectorTooltip__patchItem--highlighted {
+  background: #334155 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
+  outline: 1.5px solid #38BDF8 !important;
 }
 
 .detectorTooltip__patchScore--lowAi {
@@ -489,7 +492,7 @@
   container-name: --samplesContainer;
   container-type: size;
   pointer-events: none;
-  overflow: hidden;
+  overflow: visible;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -689,12 +692,20 @@
   --sampleInsetGlowColor: rgba(16, 185, 129, 0.2);
 }
 
+.detectorRegionsWrapper:popover-open .sample__target {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.sample__target:hover,
 .sample__target--highlighted {
-  border-width: 3px;
-  border-style: solid;
-  box-shadow: 0 0 24px var(--sampleBorderColor, #10B981);
-  transform: scale(1.05);
-  z-index: 10;
+  border-width: 3px !important;
+  border-style: solid !important;
+  border-color: var(--sampleBorderColor, #10B981) !important;
+  box-shadow: 0 0 28px var(--sampleGlowColor, rgba(16, 185, 129, 0.6)), inset 0 0 14px var(--sampleInsetGlowColor, rgba(16, 185, 129, 0.4)) !important;
+  background-color: var(--sampleBgColor, rgba(16, 185, 129, 0.3)) !important;
+  transform: scale(1.08) !important;
+  z-index: 100 !important;
 }
 
 .sample__targetLabel {

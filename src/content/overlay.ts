@@ -8,6 +8,8 @@ interface BadgeEntry {
   regionsWrapperEl?: HTMLElement;
   regionsContainerEl?: HTMLElement;
   regionEls: HTMLElement[];
+  targetPositions?: string[];
+  hoverAbortController?: AbortController;
   patches?: PatchResult[];
   result?: AnalysisResult;
   standardResult?: AnalysisResult;
@@ -156,6 +158,55 @@ function getRealImageGeometry(targetEl: HTMLElement, imageWidth?: number, imageH
   return { elW, elH, displayW, displayH, offsetX, offsetY, naturalW, naturalH };
 }
 
+function isSampleTargetVisible(target: HTMLElement, container: HTMLElement): boolean {
+  if (container.classList.contains('samples--scaled')) {
+    const pos = target.dataset.pos || '';
+    if (container.classList.contains('samples--hideTop') && pos.startsWith('top-')) return false;
+    if (container.classList.contains('samples--hideMiddle') && pos.startsWith('mid-')) return false;
+    if (container.classList.contains('samples--hideCenter') && pos.endsWith('-center')) return false;
+    if (container.classList.contains('samples--hideLeft') && pos.endsWith('-left')) return false;
+    return true;
+  }
+  let curr: HTMLElement | null = target;
+  while (curr && curr !== container) {
+    if (window.getComputedStyle(curr).display === 'none') return false;
+    curr = curr.parentElement;
+  }
+  return true;
+}
+
+function getVisibleSampleTargets(containerEl: HTMLElement, wrapperEl?: HTMLElement): HTMLElement[] {
+  const allTargets = Array.from(containerEl.querySelectorAll<HTMLElement>('.sample__target'));
+  if (containerEl.classList.contains('samples--scaled')) {
+    return allTargets.filter((t) => isSampleTargetVisible(t, containerEl));
+  }
+
+  const wasOpen = wrapperEl?.matches?.(':popover-open');
+  if (!wasOpen && wrapperEl?.showPopover) {
+    try {
+      wrapperEl.showPopover();
+    } catch {}
+  }
+
+  const visible = allTargets.filter((t) => {
+    let curr: HTMLElement | null = t;
+    while (curr && curr !== containerEl) {
+      if (window.getComputedStyle(curr).display === 'none') return false;
+      curr = curr.parentElement;
+    }
+    const r = t.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+
+  if (!wasOpen && wrapperEl?.hidePopover) {
+    try {
+      wrapperEl.hidePopover();
+    } catch {}
+  }
+
+  return visible.length > 0 ? visible : allTargets;
+}
+
 /**
  * Positions the wrapper over the target element, sizes the inner container
  * to mimic the real image size and offset, and lets CSS Grid/Flexbox handle sample layout.
@@ -279,6 +330,7 @@ export function getElementSampleBoxes(targetEl: HTMLElement): {
           } catch (e) {}
         }
 
+        entry.targetPositions = targetPositions;
         return { allBoxes, centerBox, targetPositions };
       }
     }
@@ -294,7 +346,11 @@ export function getElementSampleBoxes(targetEl: HTMLElement): {
   const geo = getRealImageGeometry(targetEl);
   const naturalW = geo.naturalW || geo.displayW || 800;
   const naturalH = geo.naturalH || geo.displayH || 600;
-  return measureSampleLayout(naturalW, naturalH);
+  const measured = measureSampleLayout(naturalW, naturalH);
+  if (entry) {
+    entry.targetPositions = measured.targetPositions;
+  }
+  return measured;
 }
 
 export function isPageInModalState(): boolean {
@@ -444,6 +500,10 @@ function showRegionsForEntry(entry: BadgeEntry, targetEl?: HTMLElement): void {
 }
 
 function hideRegionsForEntry(entry: BadgeEntry): void {
+  entry.regionEls.forEach((el) => el.classList.remove('sample__target--highlighted'));
+  entry.tooltipEl?.querySelectorAll('.detectorTooltip__patchItem--highlighted').forEach((el) => {
+    el.classList.remove('detectorTooltip__patchItem--highlighted');
+  });
   if (entry.regionsWrapperEl) {
     try {
       if (entry.regionsWrapperEl.matches(':popover-open')) {
@@ -688,9 +748,13 @@ export function injectLoadingBadge(targetEl: HTMLElement): void {
   // Light-dismiss on click outside
   document.addEventListener('click', (e) => {
     if (tooltipEl.matches && tooltipEl.matches(':popover-open')) {
-      if (!tooltipEl.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
+      const currentEntry = badgeRegistry.get(targetEl);
+      if (
+        !tooltipEl.contains(e.target as Node) &&
+        !badgeEl.contains(e.target as Node) &&
+        !currentEntry?.regionsWrapperEl?.contains(e.target as Node)
+      ) {
         tooltipEl.hidePopover();
-        const currentEntry = badgeRegistry.get(targetEl);
         if (currentEntry) hideRegionsForEntry(currentEntry);
       }
     }
@@ -906,15 +970,7 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
   const containerEl = entry.regionsContainerEl!;
   applyRegionPositions(targetEl, entry);
 
-  const visibleTargets = Array.from(containerEl.querySelectorAll<HTMLElement>('.sample__target')).filter((t) => {
-    let curr: HTMLElement | null = t;
-    while (curr && curr !== containerEl) {
-      if (window.getComputedStyle(curr).display === 'none') return false;
-      curr = curr.parentElement;
-    }
-    const r = t.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  });
+  const visibleTargets = getVisibleSampleTargets(containerEl, entry.regionsWrapperEl);
 
   const allTargets = Array.from(containerEl.querySelectorAll<HTMLElement>('.sample__target'));
   allTargets.forEach((t) => {
@@ -936,6 +992,12 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     }
 
     let centerTarget = visibleTargets.find((t) => t.dataset.pos === 'mid-center');
+    if (!centerTarget) {
+      centerTarget = visibleTargets.find((t) => t.dataset.pos === 'bot-center');
+    }
+    if (!centerTarget) {
+      centerTarget = visibleTargets.find((t) => t.dataset.pos === 'top-center');
+    }
     if (!centerTarget) {
       centerTarget = visibleTargets.find((t) => t.dataset.pos?.includes('center'));
     }
@@ -959,13 +1021,20 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
         mod = 'mediumAi';
       }
 
-      const targetEl = visibleTargets[idx] || allTargets[idx];
-      if (targetEl) {
-        targetEl.className = `sample__target sample__target--${mod}`;
-        targetEl.dataset.patchIndex = String(idx);
+      let targetSampleEl: HTMLElement | undefined;
+      if (entry.targetPositions && entry.targetPositions[idx]) {
+        targetSampleEl = containerEl.querySelector<HTMLElement>(`.sample__target[data-pos="${entry.targetPositions[idx]}"]`) || undefined;
+      }
+      if (!targetSampleEl) {
+        targetSampleEl = visibleTargets[idx] || allTargets[idx];
+      }
+
+      if (targetSampleEl) {
+        targetSampleEl.className = `sample__target sample__target--${mod}`;
+        targetSampleEl.dataset.patchIndex = String(idx);
         const labelText = `Sample #${idx + 1}`;
-        targetEl.innerHTML = `<span class="sample__targetLabel">${labelText} (${patchScorePercent}%)</span>`;
-        entry.regionEls.push(targetEl);
+        targetSampleEl.innerHTML = `<span class="sample__targetLabel">${labelText} (${patchScorePercent}%)</span>`;
+        entry.regionEls.push(targetSampleEl);
       }
     });
   }
@@ -1068,16 +1137,57 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
     ${switchButtonHtml}
   `;
 
-  // Attach hover highlight listeners to patch items in tooltip
+  if (entry.hoverAbortController) {
+    entry.hoverAbortController.abort();
+  }
+  entry.hoverAbortController = new AbortController();
+  const { signal } = entry.hoverAbortController;
+
+  // Bi-directional hover highlight listeners:
+  // 1. Tooltip items -> Sample region targets over image
   tooltipEl.querySelectorAll<HTMLElement>('.detectorTooltip__patchItem').forEach((item) => {
     const idx = parseInt(item.dataset.patchIndex || '-1', 10);
-    if (idx >= 0 && entry.regionEls[idx]) {
-      item.addEventListener('mouseenter', () => {
-        entry.regionEls[idx].classList.add('sample__target--highlighted');
-      });
-      item.addEventListener('mouseleave', () => {
-        entry.regionEls[idx].classList.remove('sample__target--highlighted');
-      });
+    const regionEl = entry.regionEls[idx];
+    if (idx >= 0 && regionEl) {
+      item.addEventListener(
+        'mouseenter',
+        () => {
+          regionEl.classList.add('sample__target--highlighted');
+          item.classList.add('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
+      item.addEventListener(
+        'mouseleave',
+        () => {
+          regionEl.classList.remove('sample__target--highlighted');
+          item.classList.remove('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
+    }
+  });
+
+  // 2. Sample region targets over image -> Tooltip items in popover
+  entry.regionEls.forEach((regionEl, idx) => {
+    const item = tooltipEl.querySelector<HTMLElement>(`.detectorTooltip__patchItem[data-patch-index="${idx}"]`);
+    if (item) {
+      regionEl.addEventListener(
+        'mouseenter',
+        () => {
+          regionEl.classList.add('sample__target--highlighted');
+          item.classList.add('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
+      regionEl.addEventListener(
+        'mouseleave',
+        () => {
+          regionEl.classList.remove('sample__target--highlighted');
+          item.classList.remove('detectorTooltip__patchItem--highlighted');
+        },
+        { signal }
+      );
     }
   });
 
@@ -1185,6 +1295,9 @@ export function injectImageBadge(targetEl: HTMLElement, result: AnalysisResult):
 export function removeBadge(targetEl: HTMLElement, keepProcessedState = false): void {
   const entry = badgeRegistry.get(targetEl);
   if (entry) {
+    if (entry.hoverAbortController) {
+      entry.hoverAbortController.abort();
+    }
     hideRegionsForEntry(entry);
     if (entry.regionsWrapperEl) {
       entry.regionsWrapperEl.remove();
