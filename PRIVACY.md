@@ -1,6 +1,6 @@
 # Privacy Policy for VeriPixel
 
-**Last updated:** October 2, 2026
+**Last updated:** October 11, 2026
 
 VeriPixel ("we", "our", or "the extension") is committed to protecting your privacy. This privacy policy explains how VeriPixel handles user data.
 
@@ -20,14 +20,17 @@ When using VeriPixel:
 - We **do not** upload or store copies of web images you view or inspect.
 - We **do not** use cookies, analytics libraries, or third-party trackers.
 
-## 2. Permissions and How They Are Used
+## 2. Website Content (Images) & Browser Permissions
 
-VeriPixel requests the following minimal browser permissions strictly to perform its local functionality:
+### Website Content
+VeriPixel reads image elements (`<img>`) displayed on web pages you browse exclusively in volatile browser memory to perform client-side AI probability scoring and metadata inspection. All analysis happens 100% on your device. No image pixels, page context, or browsing habits are ever retained, logged, or transmitted across any network.
 
-- **`<all_urls>` (Host Permissions):** Allows the extension's content script to detect visible `<img>` tags on web pages you browse, enabling the display of real-time authenticity badges and inspection overlays. No webpage content is copied or exfiltrated.
-- **`activeTab`:** Enables on-demand forensic inspection and badge interaction when you interact with an image or the extension on the active tab.
+### Permissions Used
+VeriPixel requests only the minimal permissions required to function locally:
+
+- **`<all_urls>` (Host Permissions):** Allows the extension's content script to detect and scan visible images on pages you browse, rendering non-intrusive on-screen authenticity badges and forensic popovers.
 - **`storage`:** Used exclusively to store your personal extension preferences (such as enabling/disabling automatic scanning) locally inside your browser via `chrome.storage.local`.
-- **`offscreen`:** Used to run neural network inference and canvas image rendering inside an isolated offscreen document via WebAssembly SIMD without freezing browser tabs.
+- **`offscreen`:** Used to run neural network inference (ONNX Runtime Web with WebAssembly SIMD) and canvas image cropping inside an isolated offscreen document without blocking service worker threads or freezing web pages.
 
 ## 3. Data Storage and Retention
 

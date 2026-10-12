@@ -92,7 +92,7 @@ async function ensureOffscreenDocumentExists(): Promise<void> {
           await chrome.offscreen.createDocument({
             url: OFFSCREEN_DOCUMENT_PATH,
             reasons: [chrome.offscreen.Reason.BLOBS, chrome.offscreen.Reason.DOM_PARSER],
-            justification: 'AI Model Inference using ONNX Runtime Web and DOM Canvas image cropping'
+            justification: 'ML-inferentie met ONNX Runtime Web en canvas-cropping, wat in een service worker niet kan'
           });
           logger.log('[Background] Offscreen Document created successfully.');
         }

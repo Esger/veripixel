@@ -79,15 +79,15 @@ function createImageCardElement(img: ImageSummary): HTMLElement {
 
   const scorePercent = Math.round(img.aiScore * 100);
   let verdictClass = 'popupView__verdictBadge--real';
-  let badgeLabel = 'Authentic';
+  let badgeLabel = 'No AI Signs';
   if (scorePercent >= 70) {
     verdictClass = 'popupView__verdictBadge--ai';
-    badgeLabel = 'AI Gen';
+    badgeLabel = 'Likely AI';
   } else if (scorePercent >= 30) {
     verdictClass = 'popupView__verdictBadge--edited';
-    badgeLabel = 'Edited';
+    badgeLabel = 'Possible AI';
   } else {
-    badgeLabel = 'Authentic';
+    badgeLabel = 'No AI Signs';
   }
 
   const thumb = document.createElement('img');
